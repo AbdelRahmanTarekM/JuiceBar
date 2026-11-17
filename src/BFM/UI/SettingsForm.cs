@@ -33,7 +33,7 @@ internal sealed class SettingsForm : Form
         ForeColor = Theme.Text;
         Font = new Font("Segoe UI", 9.5f);
         AutoScaleMode = AutoScaleMode.Dpi;
-        ClientSize = new Size(520, 560);
+        ClientSize = new Size(520, 590);
         ShowIcon = false;
 
         var tabs = new FlowLayoutPanel { Dock = DockStyle.Top, Height = 46, Padding = new Padding(14, 10, 14, 0), BackColor = Theme.Panel };
@@ -151,7 +151,7 @@ internal sealed class SettingsForm : Form
         col.Controls.Add(Heading("Battery health"));
         col.Controls.Add(Check("Tell me when a device drains much faster than usual", _settings.HealthAlerts,
             v => { _settings.HealthAlerts = v; Changed(); }));
-        col.Controls.Add(Note($"Compared with its earlier charges ({BatteryHistory.DrainInfo.FasterRatio}× or more), once per charge.\nThe device popup always shows its usual drain."));
+        col.Controls.Add(Note($"{BatteryHistory.DrainInfo.FasterRatio}× its earlier charges or more; at most once per charge."));
 
         col.Controls.Add(Heading("Quiet time"));
         col.Controls.Add(Check("Hold notifications while a fullscreen app or game is open", _settings.QuietFullscreen,
