@@ -29,12 +29,20 @@ internal static class Program
         ApplicationConfiguration.Initialize();
         if (Has("--uninstall"))
             return Installer.Uninstall(Has("--quiet"));
+        if (Has("--install"))
+            return Installer.Install(Has("--quiet"));
         if (Installer.IsSingleFile && !Installer.IsInstalled && !Has("--portable") && Installer.OfferInstall())
             return 0;
 
         using var mutex = new Mutex(true, @"Local\BFM.BatteryBar", out bool firstInstance);
         // After a self-update the old process may still be closing; wait for it rather than exiting.
-        if (!firstInstance && !(Has("--updated") && WaitForMutex(mutex))) return 0;
+        using var showSettings = new EventWaitHandle(false, EventResetMode.AutoReset, @"Local\BFM.ShowSettings");
+        if (!firstInstance && !(Has("--updated") && WaitForMutex(mutex)))
+        {
+            AllowSetForegroundWindow(-1);
+            showSettings.Set();
+            return 0;
+        }
 
         if (Installer.IsInstalled)
         {
@@ -45,10 +53,17 @@ internal static class Program
         var settings = Settings.Load();
         DualSenseProvider.LightbarFor = id => settings.Prefs(id).Lightbar;
         var monitor = new DeviceMonitor(settings, CreateProviders());
-        Application.Run(new BarForm(monitor, settings) { JustUpdated = Has("--updated") });
+        var bar = new BarForm(monitor, settings) { JustUpdated = Has("--updated") };
+        var wait = ThreadPool.RegisterWaitForSingleObject(showSettings,
+            (_, _) => bar.BeginInvokeSafe(() => bar.OpenSettings()), null, Timeout.Infinite, executeOnlyOnce: false);
+        Application.Run(bar);
+        wait.Unregister(null);
         settings.Save();
         return 0;
     }
+
+    [System.Runtime.InteropServices.DllImport("user32.dll")]
+    static extern bool AllowSetForegroundWindow(int processId);
 
     static bool WaitForMutex(Mutex mutex)
     {

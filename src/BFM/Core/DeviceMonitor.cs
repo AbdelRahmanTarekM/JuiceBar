@@ -202,11 +202,8 @@ internal sealed class DeviceMonitor
                     };
             }
             // Persist on change so a killed process or a shutdown doesn't forget devices that are now asleep.
-            if (dirty)
-            {
-                _settings.Save();
-                History.SaveIfDirty();
-            }
+            if (dirty) _settings.Save();
+            History.SaveIfDirty();
         }
         foreach (var (d, kind) in alerts) Alert?.Invoke(d, kind);
     }

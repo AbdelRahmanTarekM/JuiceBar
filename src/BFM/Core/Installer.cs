@@ -30,7 +30,9 @@ internal static class Installer
     static string CurrentExe => Environment.ProcessPath ?? InstalledExe;
 
     /// <summary>True for the published single-file exe (assemblies have no location on disk), false for dev builds.</summary>
+#pragma warning disable IL3000 // the empty Location is exactly what identifies the single-file build
     public static bool IsSingleFile => string.IsNullOrEmpty(typeof(Installer).Assembly.Location);
+#pragma warning restore IL3000
 
     public static bool IsInstalled => string.Equals(Path.GetFullPath(CurrentExe), Path.GetFullPath(InstalledExe), StringComparison.OrdinalIgnoreCase);
 
@@ -84,24 +86,31 @@ internal static class Installer
         var answer = MessageBox.Show(text, "BFM", MessageBoxButtons.YesNoCancel, MessageBoxIcon.Question);
         if (answer == DialogResult.Cancel) return true;
         if (answer == DialogResult.No) return false;
+        Install(quiet: false);
+        return true;
+    }
 
+    /// <summary>Installs (or upgrades) for the current user. Quiet mode is what winget runs: no dialogs, no launch.</summary>
+    public static int Install(bool quiet)
+    {
         try
         {
-            StopOtherInstances();
+            bool wasRunning = StopOtherInstances();
             Directory.CreateDirectory(InstallDir);
-            File.Copy(CurrentExe, InstalledExe, overwrite: true);
+            if (!IsInstalled) File.Copy(CurrentExe, InstalledExe, overwrite: true);
             CreateShortcut(ShortcutPath, InstalledExe);
             using (var run = Registry.CurrentUser.CreateSubKey(RunKey))
                 run.SetValue("BFM", $"\"{InstalledExe}\"");
             WriteUninstallEntry();
-            Process.Start(new ProcessStartInfo(InstalledExe) { UseShellExecute = true });
+            if (!quiet || wasRunning) Process.Start(new ProcessStartInfo(InstalledExe) { UseShellExecute = true });
+            return 0;
         }
         catch (Exception ex)
         {
             Log.Write("install failed: " + ex);
-            MessageBox.Show("Install failed: " + ex.Message, "BFM", MessageBoxButtons.OK, MessageBoxIcon.Error);
+            if (!quiet) MessageBox.Show("Install failed: " + ex.Message, "BFM", MessageBoxButtons.OK, MessageBoxIcon.Error);
+            return 1;
         }
-        return true;
     }
 
     static void WriteUninstallEntry()
@@ -148,8 +157,9 @@ internal static class Installer
         return 0;
     }
 
-    static void StopOtherInstances()
+    static bool StopOtherInstances()
     {
+        bool any = false;
         foreach (var p in Process.GetProcessesByName("BFM"))
         {
             using (p)
@@ -157,6 +167,7 @@ internal static class Installer
                 if (p.Id == Environment.ProcessId) continue;
                 try
                 {
+                    any = true;
                     p.CloseMainWindow();
                     if (!p.WaitForExit(2000)) p.Kill();
                     p.WaitForExit(3000);
@@ -164,6 +175,7 @@ internal static class Installer
                 catch (Exception ex) when (ex is InvalidOperationException or System.ComponentModel.Win32Exception) { }
             }
         }
+        return any;
     }
 
     static void TryDelete(string path)

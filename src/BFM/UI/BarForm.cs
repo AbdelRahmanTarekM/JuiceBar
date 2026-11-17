@@ -120,7 +120,7 @@ internal sealed class BarForm : Form
         base.OnFormClosed(e);
     }
 
-    void BeginInvokeSafe(Action a)
+    internal void BeginInvokeSafe(Action a)
     {
         if (IsHandleCreated && !IsDisposed) BeginInvoke(a);
     }
@@ -587,6 +587,7 @@ internal sealed class BarForm : Form
             Kernel32.TrimWorkingSet();
         };
         _settingsForm.Show();
+        _settingsForm.Activate();
     }
 
     /// <summary>Called by the settings window and menus after changing anything that affects the bar.</summary>
@@ -596,6 +597,9 @@ internal sealed class BarForm : Form
         _settings.Save();
         OnDevicesChanged();
     }
+
+    internal DeviceMonitor Monitor => _monitor;
+    internal Settings AppSettings => _settings;
 
     readonly DateTime _started = DateTime.UtcNow;
     bool _updating;
@@ -818,7 +822,7 @@ internal sealed class BarForm : Form
 
     internal void ShowBalloon(string title, string text, ToolTipIcon icon = ToolTipIcon.Warning)
     {
-        _notify ??= new NotifyIcon { Icon = SystemIcons.Information, Text = "BFM" };
+        _notify ??= new NotifyIcon { Icon = AppIcon(), Text = "BFM" };
         _notify.Visible = true;
         _notify.ShowBalloonTip(8000, title, text, icon);
         var t = new System.Windows.Forms.Timer { Interval = 15_000 };
@@ -828,5 +832,15 @@ internal sealed class BarForm : Form
             if (_notify is not null) _notify.Visible = false;
         };
         t.Start();
+    }
+
+    static Icon AppIcon()
+    {
+        try
+        {
+            if (Environment.ProcessPath is string exe && Icon.ExtractAssociatedIcon(exe) is Icon icon) return icon;
+        }
+        catch (ArgumentException) { }
+        return SystemIcons.Information;
     }
 }

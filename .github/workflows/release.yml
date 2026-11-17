@@ -1,0 +1,32 @@
+name: release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "10.0.x"
+      - name: Check version matches tag
+        shell: pwsh
+        run: |
+          $v = ([xml](Get-Content src/BFM/BFM.csproj)).Project.PropertyGroup.Version | Where-Object { $_ } | Select-Object -First 1
+          if ("v$v" -ne "${{ github.ref_name }}") { throw "BFM.csproj version $v does not match tag ${{ github.ref_name }}" }
+      - name: Publish
+        shell: pwsh
+        run: ./tools/publish.ps1
+      - name: Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            dist/BFM.exe
+            dist/BFM.exe.sha256
+          generate_release_notes: true

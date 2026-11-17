@@ -11,7 +11,11 @@
     <AssemblyName>BFM</AssemblyName>
     <RootNamespace>Bfm</RootNamespace>
     <ApplicationHighDpiMode>PerMonitorV2</ApplicationHighDpiMode>
-    <Version>0.1.0</Version>
+    <Version>0.2.0</Version>
+    <ApplicationIcon>BFM.ico</ApplicationIcon>
+    <Product>BFM - Battery Bar</Product>
+    <Description>Battery levels of your wireless devices on the taskbar</Description>
+    <IncludeSourceRevisionInInformationalVersion>false</IncludeSourceRevisionInInformationalVersion>
 
     <!-- Keep the resident footprint small. -->
     <InvariantGlobalization>true</InvariantGlobalization>

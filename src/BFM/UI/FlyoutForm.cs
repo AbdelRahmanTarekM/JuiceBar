@@ -52,11 +52,18 @@ internal sealed class FlyoutForm : Form
         var levelRow = new FlowLayoutPanel { AutoSize = true, WrapContents = false, Margin = new Padding(0, Scale(4), 0, 0) };
         levelRow.Controls.Add(_levelBar);
         levelRow.Controls.Add(_level);
-        _info = new Label { AutoSize = false, Width = inner, Height = Scale(device.Detail is null ? 36 : 54), ForeColor = Theme.TextDim, Margin = new Padding(0, Scale(4), 0, Scale(6)) };
+        _info = new Label { AutoSize = false, Width = inner, Height = Scale(device.Detail is null ? 54 : 72), ForeColor = Theme.TextDim, Margin = new Padding(0, Scale(4), 0, Scale(6)) };
 
         _body.Controls.Add(_title);
         _body.Controls.Add(levelRow);
         _body.Controls.Add(_info);
+
+        var samples = bar.Monitor.History.Get(device.Id, TimeSpan.FromDays(7));
+        if (samples.Count >= 2)
+        {
+            _body.Controls.Add(new Label { Text = "Last 7 days", AutoSize = true, ForeColor = Theme.TextDim, Margin = new Padding(0, 0, 0, Scale(2)) });
+            _body.Controls.Add(new HistoryChart(samples, TimeSpan.FromDays(7)) { Width = inner, Height = Scale(46), Margin = new Padding(0, 0, 0, Scale(6)) });
+        }
         AddControls(inner);
 
         UpdateDevice(device);
@@ -96,15 +103,19 @@ internal sealed class FlyoutForm : Form
     {
         if (device is null) return;
         _device = device;
-        _title.Text = device.Name;
+        _title.Text = device.Label;
         _level.Text = device.Battery is int b ? $"{b}%" : "--";
         _level.ForeColor = device.Charging == true ? Theme.Mid : Theme.Text;
         _levelBar.Level = device.Battery;
         _levelBar.Dim = !device.Connected;
-        var state = device.Connected ? (device.Charging == true ? "Charging" : "Connected") : "Not connected";
+        bool charging = device.Charging == true;
+        var state = device.Connected ? (charging ? "Charging" : "Connected") : $"Not connected · last seen {Theme.Ago(device.LastSeen)}";
         var updated = device.Battery is null ? "No battery reading yet" : $"Updated {Theme.Ago(device.Updated)}";
+        var estimate = device.Battery is int lvl && device.Connected && _bar.Monitor.History.Estimate(device.Id, lvl, charging) is { } left
+            ? (charging ? $"Full in about {Theme.Duration(left)}" : $"About {Theme.Duration(left)} left")
+            : device.Connected && device.Battery is not null ? "Time left: learning your usage…" : "";
         var detail = device.Detail is null ? "" : device.Detail + "\n";
-        _info.Text = $"{detail}{device.TransportLabel} · {state}\n{updated}{(device.Experimental ? " · experimental" : "")}";
+        _info.Text = $"{detail}{device.TransportLabel} · {state}\n{updated}{(device.Experimental ? " · experimental" : "")}\n{estimate}".TrimEnd();
     }
 
     void AddControls(int width)
@@ -155,10 +166,27 @@ internal sealed class FlyoutForm : Form
             _body.Controls.Add(muteButton);
         }
 
+        if (_device.Connected && _device.Kind == DeviceKind.Controller && _device.Name.StartsWith("DualSense", StringComparison.Ordinal))
+        {
+            var lightbar = MakeButton("Lightbar colour…", width);
+            lightbar.Click += (_, _) =>
+            {
+                var current = _bar.AppSettings.Prefs(_device.Id).Lightbar;
+                using var dlg = new ColorDialog { FullOpen = true, Color = current is null ? Color.Blue : ColorTranslator.FromHtml("#" + current) };
+                if (dlg.ShowDialog(this) != DialogResult.OK) return;
+                var hex = $"{dlg.Color.R:X2}{dlg.Color.G:X2}{dlg.Color.B:X2}";
+                _bar.AppSettings.EditPrefs(_device.Id).Lightbar = hex;
+                _bar.SettingsChanged();
+                var id = _device.Id;
+                _ = Task.Run(() => Providers.DualSenseProvider.SetLightbar(id, hex));
+            };
+            _body.Controls.Add(lightbar);
+        }
+
         bool canDisconnect = DeviceControl.CanDisconnect(_device);
         if (canDisconnect || DeviceControl.CanConnect(_device))
         {
-            var connect = MakeButton(canDisconnect ? "Disconnect (stays paired)" : "Connect", width);
+            var connect = MakeButton(canDisconnect ? DeviceControl.DisconnectLabel(_device) : "Connect", width);
             connect.Click += async (_, _) =>
             {
                 connect.Enabled = false;
@@ -171,7 +199,7 @@ internal sealed class FlyoutForm : Form
             _body.Controls.Add(connect);
         }
 
-        var links = new FlowLayoutPanel { AutoSize = true, WrapContents = false, Margin = new Padding(0, Scale(8), 0, 0) };
+        var links = new FlowLayoutPanel { AutoSize = true, WrapContents = true, MaximumSize = new Size(width, 0), Margin = new Padding(0, Scale(8), 0, 0) };
         if (_device.Transport != Transport.Dongle)
             links.Controls.Add(MakeLink("Bluetooth settings", () => BarForm.OpenUri("ms-settings:bluetooth")));
         if (output is not null || mic is not null)
@@ -180,6 +208,11 @@ internal sealed class FlyoutForm : Form
         {
             Close();
             _bar.HideDevice(_device.Id);
+        }));
+        links.Controls.Add(MakeLink("Settings", () =>
+        {
+            Close();
+            _bar.OpenSettings(SettingsForm.Page.Devices);
         }));
         _body.Controls.Add(links);
     }
@@ -215,6 +248,49 @@ internal sealed class FlyoutForm : Form
         };
         l.LinkClicked += (_, _) => onClick();
         return l;
+    }
+
+    /// <summary>Step chart of recorded levels; charging spans are drawn in the charging colour.</summary>
+    sealed class HistoryChart : Control
+    {
+        readonly IReadOnlyList<BatteryHistory.Sample> _samples;
+        readonly TimeSpan _span;
+
+        public HistoryChart(IReadOnlyList<BatteryHistory.Sample> samples, TimeSpan span)
+        {
+            _samples = samples;
+            _span = span;
+            SetStyle(ControlStyles.AllPaintingInWmPaint | ControlStyles.OptimizedDoubleBuffer | ControlStyles.UserPaint, true);
+            BackColor = Theme.Chip;
+        }
+
+        protected override void OnPaint(PaintEventArgs e)
+        {
+            var g = e.Graphics;
+            g.SmoothingMode = System.Drawing.Drawing2D.SmoothingMode.AntiAlias;
+            float w = Width - 1, h = Height - 1;
+            using (var grid = new Pen(Theme.Edge))
+            {
+                for (int day = 1; day < (int)_span.TotalDays; day++) g.DrawLine(grid, w * day / (float)_span.TotalDays, 0, w * day / (float)_span.TotalDays, h);
+                g.DrawLine(grid, 0, h / 2, w, h / 2);
+            }
+
+            long end = DateTimeOffset.UtcNow.ToUnixTimeSeconds(), start = end - (long)_span.TotalSeconds;
+            float X(long t) => w * Math.Clamp((t - start) / (float)(end - start), 0f, 1f);
+            float Y(int level) => 2 + (h - 4) * (1 - level / 100f);
+
+            using var normal = new Pen(Theme.Good, 1.6f);
+            using var charging = new Pen(Theme.Mid, 1.6f);
+            for (int i = 0; i < _samples.Count; i++)
+            {
+                var s = _samples[i];
+                long nextT = i + 1 < _samples.Count ? _samples[i + 1].T : end;
+                var pen = s.C ? charging : normal;
+                float x0 = X(s.T), x1 = X(nextT), y = Y(s.L);
+                g.DrawLine(pen, x0, y, x1, y);
+                if (i + 1 < _samples.Count) g.DrawLine(pen, x1, y, x1, Y(_samples[i + 1].L));
+            }
+        }
     }
 
     sealed class LevelBar : Control

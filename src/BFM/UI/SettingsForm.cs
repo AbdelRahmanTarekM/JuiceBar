@@ -33,7 +33,7 @@ internal sealed class SettingsForm : Form
         ForeColor = Theme.Text;
         Font = new Font("Segoe UI", 9.5f);
         AutoScaleMode = AutoScaleMode.Dpi;
-        ClientSize = new Size(520, 470);
+        ClientSize = new Size(520, 560);
         ShowIcon = false;
 
         var tabs = new FlowLayoutPanel { Dock = DockStyle.Top, Height = 46, Padding = new Padding(14, 10, 14, 0), BackColor = Theme.Panel };
@@ -101,14 +101,14 @@ internal sealed class SettingsForm : Form
         col.Controls.Add(Heading("Alerts and polling"));
         col.Controls.Add(Row("Default low-battery alert below",
             Number(0, 50, _settings.AlertThreshold, v => { _settings.AlertThreshold = v; Changed(); }, step: 5),
-            Note("% (0 = off; set per device under Devices)")));
+            Note("% (0 = off)")));
         col.Controls.Add(Row("Check USB dongles every",
             Number(1, 30, _settings.DonglePollMinutes, v => { _settings.DonglePollMinutes = v; Changed(); }),
             Note("minutes")));
 
         col.Controls.Add(Heading("Updates"));
         col.Controls.Add(Check("Install updates automatically", _settings.AutoUpdate, v => { _settings.AutoUpdate = v; Changed(); }));
-        var status = Note(Installer.IsInstalled ? $"Version {Installer.Version.ToString(3)}" : $"Version {Installer.Version.ToString(3)} (not installed — updates need the installed copy)");
+        var status = Note($"Version {Installer.Version.ToString(3)}{(Installer.IsInstalled ? "" : " · not installed")}");
         var check = MakeButton("Check now", 110);
         check.Enabled = Installer.IsInstalled;
         check.Click += async (_, _) =>
@@ -128,7 +128,7 @@ internal sealed class SettingsForm : Form
         var devices = _monitor.Snapshot().ToList();
         var list = new ListBox
         {
-            Bounds = new Rectangle(0, 8, 200, 330),
+            Bounds = new Rectangle(0, 8, 210, 400),
             BackColor = Theme.Chip,
             ForeColor = Theme.Text,
             BorderStyle = BorderStyle.None,
@@ -151,13 +151,13 @@ internal sealed class SettingsForm : Form
         foreach (var d in devices) list.Items.Add(d.Id);
 
         var up = MakeButton("▲", 40);
-        up.Location = new Point(0, 346);
+        up.Location = new Point(0, 416);
         var down = MakeButton("▼", 40);
-        down.Location = new Point(46, 346);
+        down.Location = new Point(46, 416);
         var orderNote = Note("bar order");
-        orderNote.Location = new Point(92, 352);
+        orderNote.Location = new Point(92, 422);
 
-        var editor = new Panel { Bounds = new Rectangle(214, 8, 270, 380), BackColor = Theme.Panel };
+        var editor = new Panel { Bounds = new Rectangle(224, 8, 260, 440), BackColor = Theme.Panel };
         _body.Controls.AddRange(new Control[] { list, up, down, orderNote, editor });
 
         void Move(int delta)
@@ -304,8 +304,8 @@ internal sealed class SettingsForm : Form
             return combo;
         }
 
-        col.Controls.Add(Row("First", Picker(_settings.AudioA, v => _settings.AudioA = v)));
-        col.Controls.Add(Row("Second", Picker(_settings.AudioB, v => _settings.AudioB = v)));
+        col.Controls.Add(Row("First", 60, Picker(_settings.AudioA, v => _settings.AudioA = v)));
+        col.Controls.Add(Row("Second", 60, Picker(_settings.AudioB, v => _settings.AudioB = v)));
         if (outputs.Count == 0) col.Controls.Add(Note("No active playback devices found."));
         col.Controls.Add(Check("Show the audio switch on the bar", _settings.AudioChip, v => { _settings.AudioChip = v; Changed(); }));
         var sound = MakeButton("Windows sound settings", 180);
@@ -387,11 +387,13 @@ internal sealed class SettingsForm : Form
         return c;
     }
 
-    static FlowLayoutPanel Row(string? label, params Control[] controls)
+    static FlowLayoutPanel Row(string? label, params Control[] controls) => Row(label, 0, controls);
+
+    static FlowLayoutPanel Row(string? label, int labelWidth, params Control[] controls)
     {
         var row = new FlowLayoutPanel { AutoSize = true, WrapContents = false, Margin = new Padding(0, 2, 0, 2), BackColor = Theme.Panel };
         if (label is not null)
-            row.Controls.Add(new Label { Text = label, AutoSize = true, ForeColor = Theme.Text, Margin = new Padding(0, 6, 8, 0) });
+            row.Controls.Add(new Label { Text = label, AutoSize = true, MinimumSize = new Size(labelWidth, 0), ForeColor = Theme.Text, Margin = new Padding(0, 6, 8, 0) });
         foreach (var c in controls)
         {
             if (c is Label l) l.Margin = new Padding(6, 6, 0, 0);
