@@ -155,19 +155,18 @@ internal sealed class FlyoutForm : Form
             _body.Controls.Add(muteButton);
         }
 
-        if (_device.Transport == Transport.Bluetooth && _device.BluetoothAddress is { } addr
-            && _device.Kind is DeviceKind.Headset or DeviceKind.Earbuds && BluetoothAudioControl.HasAudioFilter(addr))
+        bool canDisconnect = DeviceControl.CanDisconnect(_device);
+        if (canDisconnect || DeviceControl.CanConnect(_device))
         {
-            var connect = MakeButton(_device.Connected ? "Disconnect" : "Connect", width);
+            var connect = MakeButton(canDisconnect ? "Disconnect (stays paired)" : "Connect", width);
             connect.Click += async (_, _) =>
             {
-                bool wasConnected = _device.Connected;
                 connect.Enabled = false;
-                connect.Text = wasConnected ? "Disconnecting…" : "Connecting…";
-                bool ok = await Task.Run(() => wasConnected ? BluetoothAudioControl.Disconnect(addr) : BluetoothAudioControl.Connect(addr));
+                connect.Text = canDisconnect ? "Disconnecting…" : "Connecting…";
+                bool ok = await (canDisconnect ? DeviceControl.DisconnectAsync(_device) : DeviceControl.ConnectAsync(_device));
                 if (IsDisposed) return;
-                connect.Text = ok ? (wasConnected ? "Disconnect requested" : "Connect requested") : "Failed — try Bluetooth settings";
-                _bar.RefreshSoon(4000);
+                connect.Text = ok ? (canDisconnect ? "Disconnected" : "Connect requested") : "Failed — try Bluetooth settings";
+                _bar.RefreshSoon(3000);
             };
             _body.Controls.Add(connect);
         }

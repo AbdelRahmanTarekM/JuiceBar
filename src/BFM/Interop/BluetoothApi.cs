@@ -39,6 +39,44 @@ internal static class BluetoothApi
     [DllImport("bthprops.cpl")]
     static extern bool BluetoothFindDeviceClose(IntPtr h);
 
+    [StructLayout(LayoutKind.Sequential)]
+    struct FIND_RADIO_PARAMS { public int dwSize; }
+
+    [DllImport("bthprops.cpl", SetLastError = true)]
+    static extern IntPtr BluetoothFindFirstRadio(ref FIND_RADIO_PARAMS p, out IntPtr radio);
+
+    [DllImport("bthprops.cpl")]
+    static extern bool BluetoothFindNextRadio(IntPtr find, out IntPtr radio);
+
+    [DllImport("bthprops.cpl")]
+    static extern bool BluetoothFindRadioClose(IntPtr find);
+
+    // IOCTL_BTH_DISCONNECT_DEVICE: drops the baseband link to a classic device; pairing is kept.
+    const uint IoctlBthDisconnectDevice = 0x0041000C;
+
+    public static unsafe bool Disconnect(string address)
+    {
+        ulong addr = Convert.ToUInt64(address, 16);
+        var p = new FIND_RADIO_PARAMS { dwSize = Marshal.SizeOf<FIND_RADIO_PARAMS>() };
+        var find = BluetoothFindFirstRadio(ref p, out var radio);
+        if (find == IntPtr.Zero) return false;
+        try
+        {
+            do
+            {
+                using var h = new Microsoft.Win32.SafeHandles.SafeFileHandle(radio, ownsHandle: true);
+                if (Kernel32.DeviceIoControl(h, IoctlBthDisconnectDevice, &addr, sizeof(ulong), null, 0, out _, null))
+                    return true;
+                Core.Log.Write($"bt disconnect {address}: error {Marshal.GetLastWin32Error()}");
+            } while (BluetoothFindNextRadio(find, out radio));
+        }
+        finally
+        {
+            BluetoothFindRadioClose(find);
+        }
+        return false;
+    }
+
     public static Dictionary<string, ClassicDevice> GetPairedDevices()
     {
         var map = new Dictionary<string, ClassicDevice>(StringComparer.OrdinalIgnoreCase);

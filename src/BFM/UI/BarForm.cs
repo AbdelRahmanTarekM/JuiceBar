@@ -353,7 +353,8 @@ internal sealed class BarForm : Form
         base.OnMouseUp(e);
         if (e.Button == MouseButtons.Right)
         {
-            ShowMenu();
+            int at = HitTest(e.Location);
+            ShowMenu(at >= 0 && _chips[at].Dev.Id.Length > 0 ? _chips[at].Dev : null);
             return;
         }
         if (e.Button != MouseButtons.Left) return;
@@ -427,7 +428,7 @@ internal sealed class BarForm : Form
 
     // ---------- context menu ----------
 
-    void ShowMenu()
+    void ShowMenu(DeviceStatus? device = null)
     {
         _tip.Hide(this);
         var menu = new ContextMenuStrip
@@ -437,6 +438,17 @@ internal sealed class BarForm : Form
             ShowImageMargin = false,
             ShowCheckMargin = true,
         };
+
+        if (device is not null)
+        {
+            menu.Items.Add(new ToolStripMenuItem(device.Name) { Enabled = false, Font = new Font(menu.Font, FontStyle.Bold) });
+            if (DeviceControl.CanDisconnect(device))
+                menu.Items.Add("Disconnect (stays paired)", null, async (_, _) => await RunDeviceAction(DeviceControl.DisconnectAsync(device), device, "disconnect"));
+            else if (DeviceControl.CanConnect(device))
+                menu.Items.Add("Connect", null, async (_, _) => await RunDeviceAction(DeviceControl.ConnectAsync(device), device, "connect"));
+            menu.Items.Add("Hide from bar", null, (_, _) => HideDevice(device.Id));
+            menu.Items.Add(new ToolStripSeparator());
+        }
 
         menu.Items.Add("Refresh now", null, (_, _) => _ = _monitor.RefreshAsync(true));
         menu.Items.Add(new ToolStripSeparator());
@@ -492,6 +504,13 @@ internal sealed class BarForm : Form
         menu.Show(Cursor.Position, ToolStripDropDownDirection.AboveRight);
     }
 
+    async Task RunDeviceAction(Task<bool> action, DeviceStatus device, string verb)
+    {
+        bool ok = await action;
+        if (!ok) ShowBalloon("BFM", $"Couldn't {verb} {device.Name}. Try Bluetooth settings.");
+        RefreshSoon(3000);
+    }
+
     ToolStripMenuItem Choice(string title, int[] values, Func<int, string> label, Func<int> get, Action<int> set)
     {
         var parent = new ToolStripMenuItem(title);
@@ -535,11 +554,13 @@ internal sealed class BarForm : Form
 
     // ---------- alerts ----------
 
-    void ShowLowBattery(DeviceStatus d)
+    void ShowLowBattery(DeviceStatus d) => ShowBalloon("Low battery", $"{d.Name} is at {d.Battery}%");
+
+    void ShowBalloon(string title, string text)
     {
         _notify ??= new NotifyIcon { Icon = SystemIcons.Warning, Text = "BFM" };
         _notify.Visible = true;
-        _notify.ShowBalloonTip(8000, "Low battery", $"{d.Name} is at {d.Battery}%", ToolTipIcon.Warning);
+        _notify.ShowBalloonTip(8000, title, text, ToolTipIcon.Warning);
         var t = new System.Windows.Forms.Timer { Interval = 15_000 };
         t.Tick += (_, _) =>
         {
