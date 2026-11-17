@@ -19,6 +19,9 @@ internal sealed class DeviceMonitor
     {
         _settings = settings;
         _providers = providers;
+        // Logitech devices used to be keyed by receiver slot ("logi:c548:2"); they are now keyed by unit ID.
+        foreach (var legacy in settings.Cache.Keys.Where(k => System.Text.RegularExpressions.Regex.IsMatch(k, @"^logi:[0-9a-f]{4}:\d$")).ToList())
+            settings.Cache.Remove(legacy);
         foreach (var (id, c) in settings.Cache)
         {
             _devices[id] = new DeviceStatus

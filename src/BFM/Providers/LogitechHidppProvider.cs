@@ -37,10 +37,14 @@ internal sealed class LogitechHidppProvider : IBatteryProvider, IEventSource
     const byte ShortReport = 0x10, LongReport = 0x11;
     const byte SoftwareId = 0x0B;
 
-    const ushort FeatureName = 0x0005, FeatureUnifiedBattery = 0x1004, FeatureBatteryStatus = 0x1000, FeatureBatteryVoltage = 0x1001;
+    const ushort FeatureDeviceInfo = 0x0003, FeatureName = 0x0005, FeatureUnifiedBattery = 0x1004, FeatureBatteryStatus = 0x1000, FeatureBatteryVoltage = 0x1001;
 
     readonly Dictionary<string, Dictionary<ushort, byte>> _featureCache = new();
-    readonly Dictionary<string, (string Name, DeviceKind Kind)> _identityCache = new();
+    /// <summary>
+    /// Keyed by receiver slot. <c>Id</c> comes from the device's unit ID, so one keyboard paired to the same
+    /// receiver on two Easy-Switch channels (two slots) is still one device.
+    /// </summary>
+    readonly Dictionary<string, (string Name, DeviceKind Kind, string Id)> _identityCache = new();
 
     public string Name => "Logitech receiver";
     public bool IsDongle => true;
@@ -77,7 +81,7 @@ internal sealed class LogitechHidppProvider : IBatteryProvider, IEventSource
                 if (status is not null) list.Add(status);
             }
         }
-        return list;
+        return list.GroupBy(d => d.Id).Select(g => g.OrderByDescending(d => d.Connected).First()).ToList();
     }
 
     DeviceStatus? ReadDevice(HidppBus bus, string key, byte index)
@@ -100,13 +104,16 @@ internal sealed class LogitechHidppProvider : IBatteryProvider, IEventSource
         if (ping is null)
         {
             if (_identityCache.TryGetValue(key, out var known))
-                return new DeviceStatus { Id = key, Name = known.Name, Kind = known.Kind, Transport = Transport.Dongle };
+                return new DeviceStatus { Id = known.Id, Name = known.Name, Kind = known.Kind, Transport = Transport.Dongle };
             return null;
         }
 
         if (!_identityCache.TryGetValue(key, out var identity))
         {
-            identity = ("Logitech device", DeviceKind.Unknown);
+            identity = ("Logitech device", DeviceKind.Unknown, key);
+            if (Feature(FeatureDeviceInfo) is byte infoIdx && bus.Request(index, infoIdx, 0) is { } info
+                && info.Skip(1).Take(4).Any(b => b != 0))
+                identity.Id = "logi:" + Convert.ToHexString(info, 1, 4).ToLowerInvariant();
             if (Feature(FeatureName) is byte nameIdx)
             {
                 var len = bus.Request(index, nameIdx, 0);
@@ -138,7 +145,7 @@ internal sealed class LogitechHidppProvider : IBatteryProvider, IEventSource
 
         var status = new DeviceStatus
         {
-            Id = key,
+            Id = identity.Id,
             Name = identity.Name,
             Kind = identity.Kind,
             Transport = Transport.Dongle,
