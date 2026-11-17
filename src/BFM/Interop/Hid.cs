@@ -35,9 +35,9 @@ internal static partial class Hid
     [GeneratedRegex(@"\{00001124-0000-1000-8000-00805f9b34fb\}_vid&[0-9a-f]{4}([0-9a-f]{4})_pid&([0-9a-f]{4})", RegexOptions.IgnoreCase)]
     private static partial Regex BluetoothIdRegex();
 
-    /// <summary>Lists HID collections with the given vendor id (and product id, if given), over USB and,
-    /// when <paramref name="includeBluetooth"/> is set, classic Bluetooth.</summary>
-    public static List<HidInterface> Enumerate(ushort vid, ushort? pid = null, bool includeBluetooth = false)
+    /// <summary>Lists HID collections with the given vendor id (any vendor when null; and product id, if given),
+    /// over USB and, when <paramref name="includeBluetooth"/> is set, classic Bluetooth.</summary>
+    public static List<HidInterface> Enumerate(ushort? vid, ushort? pid = null, bool includeBluetooth = false)
     {
         var result = new List<HidInterface>();
         HidD_GetHidGuid(out var guid);
@@ -53,7 +53,7 @@ internal static partial class Hid
             if (!m.Success) continue;
             var v = Convert.ToUInt16(m.Groups[1].Value, 16);
             var p = Convert.ToUInt16(m.Groups[2].Value, 16);
-            if (v != vid || (pid is ushort want && p != want)) continue;
+            if ((vid is ushort wantVid && v != wantVid) || (pid is ushort want && p != want)) continue;
             int mi = !bt && m.Groups[3].Success ? Convert.ToInt32(m.Groups[3].Value, 16) : -1;
 
             using var h = Kernel32.CreateFileW(path, 0, 3, IntPtr.Zero, 3, 0, IntPtr.Zero);
