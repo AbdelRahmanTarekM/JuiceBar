@@ -8,6 +8,9 @@ internal static class User32
     public static readonly IntPtr HwndTopmost = new(-1);
     public const uint SwpNoSize = 0x1, SwpNoMove = 0x2, SwpNoActivate = 0x10, SwpNoOwnerZOrder = 0x200;
     public const uint EventSystemForeground = 0x0003;
+    public const uint EventObjectLocationChange = 0x800B;
+    [DllImport("user32.dll")] public static extern uint GetWindowThreadProcessId(IntPtr hwnd, out uint pid);
+    [DllImport("user32.dll")] public static extern bool IsWindowVisible(IntPtr hwnd);
     public const uint WineventOutOfContext = 0;
 
     public delegate void WinEventProc(IntPtr hook, uint evt, IntPtr hwnd, int idObject, int idChild, uint thread, uint time);

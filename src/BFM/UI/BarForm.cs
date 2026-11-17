@@ -24,7 +24,10 @@ internal sealed class BarForm : Form
     readonly System.Windows.Forms.Timer _zOrderTimer = new() { Interval = 5_000 };
     readonly System.Windows.Forms.Timer _deviceChangeTimer = new() { Interval = 3_000 };
     readonly User32.WinEventProc _foregroundProc;
+    readonly User32.WinEventProc _trayMovedProc;
     readonly uint _taskbarCreatedMsg;
+    IntPtr _trayHwnd, _trayHook;
+    bool _taskbarHidden;
 
     IReadOnlyList<DeviceStatus> _devices = Array.Empty<DeviceStatus>();
     Font _font = null!, _iconFont = null!, _boltFont = null!;
@@ -68,6 +71,7 @@ internal sealed class BarForm : Form
         };
 
         _foregroundProc = OnForegroundChanged;
+        _trayMovedProc = OnTrayMoved;
         _taskbarCreatedMsg = User32.RegisterWindowMessageW("TaskbarCreated");
     }
 
@@ -89,12 +93,14 @@ internal sealed class BarForm : Form
         base.OnHandleCreated(e);
         _hook = User32.SetWinEventHook(User32.EventSystemForeground, User32.EventSystemForeground, IntPtr.Zero,
             _foregroundProc, 0, 0, User32.WineventOutOfContext);
+        HookTaskbar();
     }
 
     protected override void OnShown(EventArgs e)
     {
         base.OnShown(e);
         PositionOnTaskbar();
+        UpdateVisibility();
         _pollTimer.Start();
         _zOrderTimer.Start();
         _ = _monitor.RefreshAsync(true);
@@ -103,6 +109,7 @@ internal sealed class BarForm : Form
     protected override void OnFormClosed(FormClosedEventArgs e)
     {
         if (_hook != IntPtr.Zero) User32.UnhookWinEvent(_hook);
+        if (_trayHook != IntPtr.Zero) User32.UnhookWinEvent(_trayHook);
         _notify?.Dispose();
         base.OnFormClosed(e);
     }
@@ -212,10 +219,66 @@ internal sealed class BarForm : Form
 
     // ---------- placement ----------
 
+    /// <summary>
+    /// Watches the taskbar window itself (not its docked slot) so the bar slides away and back with an
+    /// auto-hiding taskbar. The hook is scoped to Explorer's taskbar thread, so it costs nothing otherwise.
+    /// </summary>
+    void HookTaskbar()
+    {
+        if (_trayHook != IntPtr.Zero) User32.UnhookWinEvent(_trayHook);
+        _trayHook = IntPtr.Zero;
+        _trayHwnd = User32.FindWindowW("Shell_TrayWnd", null);
+        if (_trayHwnd == IntPtr.Zero) return;
+        uint tid = User32.GetWindowThreadProcessId(_trayHwnd, out uint pid);
+        _trayHook = User32.SetWinEventHook(User32.EventObjectLocationChange, User32.EventObjectLocationChange, IntPtr.Zero,
+            _trayMovedProc, pid, tid, User32.WineventOutOfContext);
+    }
+
+    void OnTrayMoved(IntPtr hook, uint evt, IntPtr hwnd, int idObject, int idChild, uint thread, uint time)
+    {
+        if (hwnd != _trayHwnd || idObject != 0) return;
+        bool wasHidden = _taskbarHidden;
+        PositionOnTaskbar();
+        if (wasHidden != _taskbarHidden) UpdateVisibility();
+    }
+
+    /// <summary>The taskbar's on-screen rectangle; while auto-hidden it sits almost entirely off-screen.</summary>
+    Rectangle? LiveTaskbarRect(out bool hidden)
+    {
+        hidden = false;
+        if (_trayHwnd == IntPtr.Zero || !User32.GetWindowRect(_trayHwnd, out var wr)) return null;
+        var rect = wr.ToRectangle();
+        var visible = Rectangle.Intersect(rect, Screen.FromHandle(_trayHwnd).Bounds);
+        hidden = !User32.IsWindowVisible(_trayHwnd)
+                 || visible.Width * visible.Height < rect.Width * rect.Height / 2;
+        return rect;
+    }
+
+    /// <summary>Kept visible while the pointer is on it or a flyout is open, so it never vanishes mid-click.</summary>
+    bool InUse => _flyout is { IsDisposed: false } || (Visible && Bounds.Contains(Cursor.Position));
+
+    void UpdateVisibility()
+    {
+        bool want = !_fullscreenHidden && (!_taskbarHidden || InUse);
+        if (want && !Visible)
+        {
+            Show();
+            PositionOnTaskbar();
+        }
+        else if (!want && Visible)
+        {
+            _flyout?.Close();
+            _tip.Hide(this);
+            Hide();
+        }
+    }
+
     void PositionOnTaskbar()
     {
         if (User32.GetTaskbar() is not { } tb) return;
         var r = tb.Rect;
+        if (LiveTaskbarRect(out _taskbarHidden) is { } live && live.Size == r.Size)
+            r = live;
         if (tb.Edge is 1 or 3)
         {
             int minX = r.Left + S(6);
@@ -253,17 +316,10 @@ internal sealed class BarForm : Form
                          && rect.Right >= screen.Right && rect.Bottom >= screen.Bottom;
         }
 
-        if (fullscreen && Visible)
+        if (fullscreen != _fullscreenHidden)
         {
-            _fullscreenHidden = true;
-            _flyout?.Close();
-            Hide();
-        }
-        else if (!fullscreen && _fullscreenHidden)
-        {
-            _fullscreenHidden = false;
-            Show();
-            PositionOnTaskbar();
+            _fullscreenHidden = fullscreen;
+            UpdateVisibility();
         }
         else if (cls == "Shell_TrayWnd")
         {
@@ -278,9 +334,22 @@ internal sealed class BarForm : Form
             _deviceChangeTimer.Stop();
             _deviceChangeTimer.Start();
         }
-        else if (m.Msg is WmDisplayChange or WmSettingChange || (m.Msg == _taskbarCreatedMsg && _taskbarCreatedMsg != 0))
+        else if (m.Msg == _taskbarCreatedMsg && _taskbarCreatedMsg != 0)
         {
-            BeginInvokeSafe(PositionOnTaskbar);
+            BeginInvokeSafe(() =>
+            {
+                HookTaskbar();
+                PositionOnTaskbar();
+                UpdateVisibility();
+            });
+        }
+        else if (m.Msg is WmDisplayChange or WmSettingChange)
+        {
+            BeginInvokeSafe(() =>
+            {
+                PositionOnTaskbar();
+                UpdateVisibility();
+            });
         }
         else if (m.Msg == WmDpiChanged)
         {
@@ -346,6 +415,7 @@ internal sealed class BarForm : Form
             _hover = -1;
             Invalidate();
         }
+        if (_taskbarHidden) BeginInvokeSafe(UpdateVisibility);
     }
 
     protected override void OnMouseUp(MouseEventArgs e)
@@ -402,6 +472,7 @@ internal sealed class BarForm : Form
         _flyout.FormClosed += (_, _) =>
         {
             _flyout = null;
+            if (_taskbarHidden) BeginInvokeSafe(UpdateVisibility);
             Kernel32.TrimWorkingSet();
         };
         _flyout.Show();
