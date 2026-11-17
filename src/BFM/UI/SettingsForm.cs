@@ -10,7 +10,7 @@ namespace Bfm.UI;
 /// </summary>
 internal sealed class SettingsForm : Form
 {
-    public enum Page { General, Devices, Audio }
+    public enum Page { General, Alerts, Devices, Audio }
 
     readonly Settings _settings;
     readonly DeviceMonitor _monitor;
@@ -70,6 +70,7 @@ internal sealed class SettingsForm : Form
         switch (page)
         {
             case Page.General: BuildGeneral(); break;
+            case Page.Alerts: BuildAlerts(); break;
             case Page.Devices: BuildDevices(); break;
             case Page.Audio: BuildAudio(); break;
         }
@@ -98,10 +99,7 @@ internal sealed class SettingsForm : Form
         reset.Click += (_, _) => _bar.ResetPosition();
         col.Controls.Add(reset);
 
-        col.Controls.Add(Heading("Alerts and polling"));
-        col.Controls.Add(Row("Default low-battery alert below",
-            Number(0, 50, _settings.AlertThreshold, v => { _settings.AlertThreshold = v; Changed(); }, step: 5),
-            Note("% (0 = off)")));
+        col.Controls.Add(Heading("Polling"));
         col.Controls.Add(Row("Check USB dongles every",
             Number(1, 30, _settings.DonglePollMinutes, v => { _settings.DonglePollMinutes = v; Changed(); }),
             Note("minutes")));
@@ -119,6 +117,55 @@ internal sealed class SettingsForm : Form
             if (!check.IsDisposed) check.Enabled = true;
         };
         col.Controls.Add(Row(null, check, status));
+    }
+
+    // ---------- Alerts ----------
+
+    void BuildAlerts()
+    {
+        var col = Column();
+
+        col.Controls.Add(Heading("Battery alerts"));
+        col.Controls.Add(Row("Default low-battery alert below",
+            Number(0, 50, _settings.AlertThreshold, v => { _settings.AlertThreshold = v; Changed(); }, step: 5),
+            Note("% (0 = off)")));
+        col.Controls.Add(Note("Per-device levels and full-charge alerts are on the Devices page."));
+
+        col.Controls.Add(Heading("Charge tonight"));
+        col.Controls.Add(Check("Remind me daily which devices need charging", _settings.ChargeReminder,
+            v => { _settings.ChargeReminder = v; Changed(); }));
+        col.Controls.Add(Row("At", 120, TimeCombo(_settings.ChargeReminderAt, v =>
+        {
+            _settings.ChargeReminderAt = v;
+            // Allow today's reminder again when the time moves later than now.
+            if (v > DateTime.Now.Hour * 60 + DateTime.Now.Minute) _settings.LastChargeReminder = null;
+            Changed();
+        })));
+        col.Controls.Add(Row("List devices below", 120,
+            Number(5, 90, _settings.ChargeReminderBelow, v => { _settings.ChargeReminderBelow = v; Changed(); }, step: 5),
+            Note("%")));
+        var preview = MakeButton("Show it now", 110);
+        preview.Click += (_, _) => _bar.ShowChargeReminder(always: true);
+        col.Controls.Add(preview);
+
+        col.Controls.Add(Heading("Quiet time"));
+        col.Controls.Add(Check("Hold notifications while a fullscreen app or game is open", _settings.QuietFullscreen,
+            v => { _settings.QuietFullscreen = v; Changed(); }));
+        col.Controls.Add(Check("Quiet hours", _settings.QuietHours, v => { _settings.QuietHours = v; Changed(); }));
+        col.Controls.Add(Row("From", 120,
+            TimeCombo(_settings.QuietFrom, v => { _settings.QuietFrom = v; Changed(); }),
+            Note("to"),
+            TimeCombo(_settings.QuietTo, v => { _settings.QuietTo = v; Changed(); })));
+        col.Controls.Add(Note("Held notifications appear together once quiet time ends."));
+    }
+
+    static ComboBox TimeCombo(int minutes, Action<int> set)
+    {
+        var slots = Enumerable.Range(0, 48).Select(i => i * 30).ToArray();
+        int index = Array.FindIndex(slots, s => s >= minutes);
+        var combo = Combo(slots.Select(s => $"{s / 60:00}:{s % 60:00}"), index < 0 ? 0 : index, i => set(slots[i]));
+        combo.Width = 80;
+        return combo;
     }
 
     // ---------- Devices ----------

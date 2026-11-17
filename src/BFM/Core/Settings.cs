@@ -47,6 +47,27 @@ public sealed class Settings
     public string? AudioA { get; set; }
     public string? AudioB { get; set; }
 
+    /// <summary>Daily "charge tonight" reminder, at a time of day in minutes after midnight.</summary>
+    public bool ChargeReminder { get; set; } = true;
+    public int ChargeReminderAt { get; set; } = 21 * 60;
+    public int ChargeReminderBelow { get; set; } = 30;
+    public DateTime? LastChargeReminder { get; set; }
+
+    /// <summary>Hold notifications while a fullscreen app or game is in front, and optionally during a daily window.</summary>
+    public bool QuietFullscreen { get; set; } = true;
+    public bool QuietHours { get; set; }
+    public int QuietFrom { get; set; } = 23 * 60;
+    public int QuietTo { get; set; } = 7 * 60;
+
+    public bool HealthAlerts { get; set; } = true;
+
+    public bool InQuietHours(DateTime now)
+    {
+        if (!QuietHours || QuietFrom == QuietTo) return false;
+        int m = now.Hour * 60 + now.Minute;
+        return QuietFrom < QuietTo ? m >= QuietFrom && m < QuietTo : m >= QuietFrom || m < QuietTo;
+    }
+
     public bool AutoUpdate { get; set; } = true;
     public DateTime? LastUpdateCheck { get; set; }
 

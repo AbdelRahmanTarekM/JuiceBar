@@ -65,6 +65,8 @@ internal sealed class BarForm : Form
         {
             _ = _monitor.RefreshAsync(false);
             if (UpdateDue()) _ = CheckForUpdateAsync(manual: false);
+            ReleaseHeld();
+            CheckChargeReminder();
         };
         _zOrderTimer.Tick += (_, _) => KeepOnTop();
         _deviceChangeTimer.Tick += (_, _) =>
@@ -381,6 +383,7 @@ internal sealed class BarForm : Form
         {
             _fullscreenHidden = fullscreen;
             UpdateVisibility();
+            if (!fullscreen) ReleaseHeld();
         }
         else if (cls == "Shell_TrayWnd")
         {
@@ -828,14 +831,70 @@ internal sealed class BarForm : Form
 
     void ShowAlert(DeviceStatus d, AlertKind kind)
     {
-        if (kind == AlertKind.Full) ShowBalloon("Fully charged", $"{d.Label} is at 100% — you can unplug it", ToolTipIcon.Info);
-        else ShowBalloon("Low battery", $"{d.Label} is at {d.Battery}%");
+        if (kind == AlertKind.Full)
+            Notify($"full:{d.Id}", "Fully charged", $"{d.Label} is at 100% — you can unplug it", ToolTipIcon.Info);
+        else
+            Notify($"low:{d.Id}", "Low battery", $"{d.Label} is at {d.Battery}%", ToolTipIcon.Warning,
+                () => _devices.FirstOrDefault(x => x.Id == d.Id)?.Charging != true);
+    }
+
+    readonly record struct Held(string Key, string Title, string Text, ToolTipIcon Icon, Func<bool>? StillValid);
+    readonly List<Held> _held = new();
+
+    bool Quiet => (_settings.QuietFullscreen && _fullscreenHidden) || _settings.InQuietHours(DateTime.Now);
+
+    /// <summary>Shows an automatic notification now, or holds it (latest per key) until quiet time ends.</summary>
+    void Notify(string key, string title, string text, ToolTipIcon icon, Func<bool>? stillValid = null)
+    {
+        if (!Quiet)
+        {
+            ShowBalloon(title, text, icon);
+            return;
+        }
+        _held.RemoveAll(h => h.Key == key);
+        _held.Add(new Held(key, title, text, icon, stillValid));
+    }
+
+    void ReleaseHeld()
+    {
+        if (_held.Count == 0 || Quiet) return;
+        var due = _held.Where(h => h.StillValid?.Invoke() != false).ToList();
+        _held.Clear();
+        if (due.Count == 1)
+            ShowBalloon(due[0].Title, due[0].Text, due[0].Icon);
+        else if (due.Count > 1)
+            ShowBalloon("While you were busy", string.Join("\n", due.Select(h => $"{h.Title}: {h.Text}")),
+                due.Any(h => h.Icon == ToolTipIcon.Warning) ? ToolTipIcon.Warning : ToolTipIcon.Info);
+    }
+
+    void CheckChargeReminder()
+    {
+        var now = DateTime.Now;
+        if (!_settings.ChargeReminder || now.Hour * 60 + now.Minute < _settings.ChargeReminderAt
+            || _settings.LastChargeReminder?.Date == now.Date || Quiet) return;
+        _settings.LastChargeReminder = now;
+        _settings.Save();
+        ShowChargeReminder(always: false);
+    }
+
+    /// <summary>Lists devices under the reminder level; with <paramref name="always"/> it also reports when there are none.</summary>
+    internal void ShowChargeReminder(bool always)
+    {
+        var low = _devices
+            .Where(d => d.Battery is int b && b < _settings.ChargeReminderBelow && d.Charging != true && !_settings.Hidden.Contains(d.Id))
+            .OrderBy(d => d.Battery)
+            .ToList();
+        if (low.Count > 0)
+            ShowBalloon("Charge tonight", string.Join("\n", low.Select(d => $"{d.Label} — {d.Battery}%{(d.Connected ? "" : " (last seen)")}")), ToolTipIcon.Info);
+        else if (always)
+            ShowBalloon("Charge tonight", $"Nothing is below {_settings.ChargeReminderBelow}% right now.", ToolTipIcon.Info);
     }
 
     internal void ShowBalloon(string title, string text, ToolTipIcon icon = ToolTipIcon.Warning)
     {
         _notify ??= new NotifyIcon { Icon = AppIcon(), Text = AppInfo.Name };
         _notify.Visible = true;
+        if (text.Length > 250) text = text[..249] + "…";
         _notify.ShowBalloonTip(8000, title, text, icon);
         var t = new System.Windows.Forms.Timer { Interval = 15_000 };
         t.Tick += (_, _) =>
