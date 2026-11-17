@@ -14,6 +14,7 @@
     <Version>0.3.0</Version>
     <ApplicationIcon>JuiceBar.ico</ApplicationIcon>
     <Product>Juice Bar</Product>
+    <AssemblyTitle>Juice Bar</AssemblyTitle>
     <Description>Battery levels of your wireless devices on the taskbar</Description>
     <IncludeSourceRevisionInInformationalVersion>false</IncludeSourceRevisionInInformationalVersion>
 
