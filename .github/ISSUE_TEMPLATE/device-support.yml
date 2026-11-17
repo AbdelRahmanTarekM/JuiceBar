@@ -1,0 +1,67 @@
+name: Device support request
+description: A device shows no battery, the wrong battery, or isn't listed.
+title: "Device support: <brand and model>"
+labels: ["device support"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks! The probe output below is what lets us add a device, so please include it.
+        Run this in PowerShell with the device connected and awake:
+
+        ```powershell
+        & "$env:LOCALAPPDATA\Programs\JuiceBar\JuiceBar.exe" --probe
+        ```
+
+        It prints a report and saves it to `%TEMP%\juicebar-probe.txt`. Bluetooth addresses and serials are
+        shortened automatically. **Remove personal device names** (like "Jane's iPhone") before posting.
+  - type: input
+    id: device
+    attributes:
+      label: Device
+      description: Brand and exact model, as printed on the box or the device.
+      placeholder: e.g. Razer BlackShark V2 Pro (2023)
+    validations:
+      required: true
+  - type: dropdown
+    id: connection
+    attributes:
+      label: How is it connected?
+      multiple: true
+      options:
+        - Bluetooth
+        - 2.4 GHz USB dongle / receiver
+        - USB cable
+    validations:
+      required: true
+  - type: textarea
+    id: probe
+    attributes:
+      label: Probe output
+      description: Paste the whole contents of %TEMP%\juicebar-probe.txt.
+      render: text
+    validations:
+      required: true
+  - type: textarea
+    id: current
+    attributes:
+      label: What Juice Bar shows now
+      description: Nothing, no battery, a wrong level, shows twice…
+    validations:
+      required: true
+  - type: textarea
+    id: reference
+    attributes:
+      label: Where can you see the correct battery level?
+      description: The vendor's app (name), Windows Settings, an LED on the device… and what level it shows right now.
+  - type: textarea
+    id: protocol
+    attributes:
+      label: Known protocol sources (optional)
+      description: Links to open-source projects that read this device's battery (Linux driver, HeadsetControl, Solaar, OpenRGB…).
+  - type: input
+    id: version
+    attributes:
+      label: Juice Bar version
+      description: Settings > General shows it.
+      placeholder: "0.3.0"

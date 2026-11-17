@@ -6,7 +6,10 @@ Publisher: Ahmed Ashraf
 PublisherUrl: https://github.com/AhmedAshrafM
 PackageName: Juice Bar
 PackageUrl: https://github.com/AhmedAshrafM/JuiceBar
-License: Proprietary
+License: MIT
+LicenseUrl: https://github.com/AhmedAshrafM/JuiceBar/blob/main/LICENSE
+Copyright: Copyright (c) 2026 Ahmed Ashraf
+PublisherSupportUrl: https://github.com/AhmedAshrafM/JuiceBar/issues
 ShortDescription: Battery levels of your Bluetooth and USB-dongle devices on the Windows taskbar.
 Description: >-
   A tiny always-on-top strip on the empty left side of the Windows 11 taskbar showing the battery of

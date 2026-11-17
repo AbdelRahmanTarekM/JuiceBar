@@ -4,3 +4,11 @@ obj/
 *.user
 publish/
 dist/
+
+# Runtime data and diagnostics; never commit these
+*.log
+settings.json
+history.json
+logitech-slots.json
+*probe*.txt
+

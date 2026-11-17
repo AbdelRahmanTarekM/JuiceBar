@@ -1,0 +1,5 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Add a device yourself
+    url: https://github.com/AhmedAshrafM/JuiceBar/blob/main/docs/adding-a-device.md
+    about: Step-by-step guide to diagnosing a device's protocol and writing a provider (works well with AI coding agents).
