@@ -11,6 +11,9 @@ internal sealed class LogitechHidppProvider : IBatteryProvider, IEventSource
 {
     readonly Dictionary<string, HidEventWatcher> _watchers = new();
 
+    /// <summary>Our own link query makes the receiver emit 0x41 reports; the watcher ignores them until this tick.</summary>
+    long _ownQueryUntil;
+
     /// <summary>Receivers send a short 0x41 report when a paired device connects or drops its link
     /// (when notifications are enabled, which Logi Options+ does).</summary>
     public void EnsureWatching(Action onEvent)
@@ -21,7 +24,9 @@ internal sealed class LogitechHidppProvider : IBatteryProvider, IEventSource
             {
                 if (_watchers.TryGetValue(ifc.Path, out var w) && w.IsAlive) continue;
                 w?.Dispose();
-                var started = HidEventWatcher.Start(ifc, r => r.Length > 3 && r[0] == ShortReport && r[2] == 0x41, onEvent);
+                var started = HidEventWatcher.Start(ifc,
+                    r => r.Length > 3 && r[0] == ShortReport && r[2] == 0x41 && Environment.TickCount64 > Interlocked.Read(ref _ownQueryUntil),
+                    onEvent);
                 if (started is null) _watchers.Remove(ifc.Path);
                 else _watchers[ifc.Path] = started;
             }
@@ -44,7 +49,44 @@ internal sealed class LogitechHidppProvider : IBatteryProvider, IEventSource
     /// Keyed by receiver slot. <c>Id</c> comes from the device's unit ID, so one keyboard paired to the same
     /// receiver on two Easy-Switch channels (two slots) is still one device.
     /// </summary>
-    readonly Dictionary<string, (string Name, DeviceKind Kind, string Id)> _identityCache = new();
+    readonly Dictionary<string, SlotIdentity> _identityCache = LoadIdentities();
+    readonly HashSet<string> _verified = new();
+
+    internal sealed class SlotIdentity
+    {
+        public string Name { get; set; } = "";
+        public DeviceKind Kind { get; set; }
+        public string Id { get; set; } = "";
+    }
+
+    static string IdentityFile => Path.Combine(Settings.Folder, "logitech-slots.json");
+
+    static Dictionary<string, SlotIdentity> LoadIdentities()
+    {
+        try
+        {
+            if (File.Exists(IdentityFile))
+                return System.Text.Json.JsonSerializer.Deserialize<Dictionary<string, SlotIdentity>>(File.ReadAllText(IdentityFile)) ?? new();
+        }
+        catch (Exception ex)
+        {
+            Log.Write("logitech slots load failed: " + ex.Message);
+        }
+        return new();
+    }
+
+    void SaveIdentities()
+    {
+        try
+        {
+            Directory.CreateDirectory(Settings.Folder);
+            File.WriteAllText(IdentityFile, System.Text.Json.JsonSerializer.Serialize(_identityCache));
+        }
+        catch (Exception ex)
+        {
+            Log.Write("logitech slots save failed: " + ex.Message);
+        }
+    }
 
     public string Name => "Logitech receiver";
     public bool IsDongle => true;
@@ -67,25 +109,68 @@ internal sealed class LogitechHidppProvider : IBatteryProvider, IEventSource
                 continue;
             }
             var bus = new HidppBus(shortCh, longCh);
-            if (Log.Verbose)
+            Interlocked.Exchange(ref _ownQueryUntil, Environment.TickCount64 + 5000);
+            var links = bus.QueryLinks();
+            Interlocked.Exchange(ref _ownQueryUntil, Environment.TickCount64 + 1000);
+            Log.Debug($"receiver {shortIfc.Pid:x4}: links {string.Join(" ", links.Select(l => $"{l.Key}={(l.Value ? "up" : "down")}"))}");
+            foreach (var slot in links.Keys)
             {
-                // HID++ 1.0 register 0x02 on the receiver: number of devices currently connected.
-                var reg = bus.ReadRegister(0xFF, 0x02);
-                Log.Debug($"receiver {shortIfc.Pid:x4}: connection register {(reg is null ? "no answer" : Convert.ToHexString(reg))}");
+                var slotKey = $"logi:{shortIfc.Pid:x4}:{slot}";
+                if (!_identityCache.ContainsKey(slotKey) && ReceiverIdentity(bus, slot, slotKey) is { } fromReceiver)
+                {
+                    _identityCache[slotKey] = fromReceiver;
+                    SaveIdentities();
+                }
             }
 
             for (byte index = 1; index <= 6; index++)
             {
+                if (links.Count > 0 && !links.ContainsKey(index)) continue;
                 var key = $"logi:{shortIfc.Pid:x4}:{index}";
-                var status = ReadDevice(bus, key, index);
+                var status = ReadDevice(bus, key, index, links.TryGetValue(index, out var up) ? up : null);
                 if (status is not null) list.Add(status);
             }
         }
         return list.GroupBy(d => d.Id).Select(g => g.OrderByDescending(d => d.Connected).First()).ToList();
     }
 
-    DeviceStatus? ReadDevice(HidppBus bus, string key, byte index)
+    /// <summary>
+    /// Bolt receivers keep each slot's pairing record (register 0xB5): 0x50+n = kind, wireless PID, unit ID;
+    /// 0x60+n page 1 = name. Read from the receiver itself, so it works while the device sleeps.
+    /// </summary>
+    static SlotIdentity? ReceiverIdentity(HidppBus bus, byte slot, string slotKey)
     {
+        var pair = bus.ReadLongRegister(0xFF, 0xB5, (byte)(0x50 + slot));
+        if (pair is null || pair.Length < 8 || pair[0] != 0x50 + slot) return null;
+        var identity = new SlotIdentity
+        {
+            Id = pair.AsSpan(4, 4).ContainsAnyExcept((byte)0) ? "logi:" + Convert.ToHexString(pair, 4, 4).ToLowerInvariant() : slotKey,
+            Kind = (pair[1] & 0x0F) switch
+            {
+                1 or 3 => DeviceKind.Keyboard,
+                2 or 8 or 9 => DeviceKind.Mouse,
+                _ => DeviceKind.Unknown,
+            },
+            Name = "Logitech device",
+        };
+        var name = bus.ReadLongRegister(0xFF, 0xB5, (byte)(0x60 + slot), 1);
+        if (name is not null && name.Length > 3 && name[2] > 0)
+            identity.Name = System.Text.Encoding.ASCII.GetString(name, 3, Math.Min(name[2], name.Length - 3)).Trim('\0', ' ');
+        Log.Debug($"{slotKey}: receiver record {identity.Name} {identity.Kind} {identity.Id}");
+        return identity;
+    }
+
+    /// <param name="linked">The receiver's view of the slot. Devices nap between keystrokes and then don't answer,
+    /// so "linked" decides connected; a failed ping only means "asleep".</param>
+    DeviceStatus? ReadDevice(HidppBus bus, string key, byte index, bool? linked)
+    {
+        if (linked == false)
+        {
+            return _identityCache.TryGetValue(key, out var gone)
+                ? new DeviceStatus { Id = gone.Id, Name = gone.Name, Kind = gone.Kind, Transport = Transport.Dongle }
+                : null;
+        }
+
         var features = _featureCache.TryGetValue(key, out var f) ? f : null;
 
         byte? Feature(ushort id)
@@ -104,13 +189,19 @@ internal sealed class LogitechHidppProvider : IBatteryProvider, IEventSource
         if (ping is null)
         {
             if (_identityCache.TryGetValue(key, out var known))
-                return new DeviceStatus { Id = known.Id, Name = known.Name, Kind = known.Kind, Transport = Transport.Dongle };
+                return new DeviceStatus
+                {
+                    Id = known.Id, Name = known.Name, Kind = known.Kind, Transport = Transport.Dongle,
+                    Connected = linked == true,
+                };
             return null;
         }
 
-        if (!_identityCache.TryGetValue(key, out var identity))
+        // Identities saved by an earlier run are trusted while the device naps, and re-read once it answers
+        // (the slot may have been re-paired with another device since).
+        if (!_verified.Contains(key) || !_identityCache.TryGetValue(key, out var identity))
         {
-            identity = ("Logitech device", DeviceKind.Unknown, key);
+            identity = new SlotIdentity { Name = "Logitech device", Kind = DeviceKind.Unknown, Id = key };
             if (Feature(FeatureDeviceInfo) is byte infoIdx && bus.Request(index, infoIdx, 0) is { } info
                 && info.Skip(1).Take(4).Any(b => b != 0))
                 identity.Id = "logi:" + Convert.ToHexString(info, 1, 4).ToLowerInvariant();
@@ -140,7 +231,11 @@ internal sealed class LogitechHidppProvider : IBatteryProvider, IEventSource
                     };
                 }
             }
+            _verified.Add(key);
+            bool changed = !_identityCache.TryGetValue(key, out var old)
+                           || old.Id != identity.Id || old.Name != identity.Name || old.Kind != identity.Kind;
             _identityCache[key] = identity;
+            if (changed) SaveIdentities();
         }
 
         var status = new DeviceStatus
@@ -200,6 +295,32 @@ internal sealed class LogitechHidppProvider : IBatteryProvider, IEventSource
 
         /// <summary>HID++ 1.0 register read (sub-id 0x81) on the receiver or a device.</summary>
         public byte[]? ReadRegister(byte device, byte register) => Raw(device, 0x81, register, Array.Empty<byte>());
+
+        /// <summary>HID++ 1.0 long register read (sub-id 0x83); the reply comes back as a long report.</summary>
+        public byte[]? ReadLongRegister(byte device, byte register, params byte[] args) => Raw(device, 0x83, register, args);
+
+        /// <summary>
+        /// Asks the receiver to re-announce every paired device (register 0x02 = 0x02, what Solaar does on start).
+        /// It changes no setting; it only emits one 0x41 report per slot. Returns slot → link established.
+        /// </summary>
+        public Dictionary<byte, bool> QueryLinks()
+        {
+            var links = new Dictionary<byte, bool>();
+            // Written directly rather than through Raw: the 0x41 reports can arrive before the write's ack.
+            if (!shortCh.Write(new byte[] { ShortReport, 0xFF, 0x80, 0x02, 0x02, 0, 0 })) return links;
+            var until = Environment.TickCount64 + 500;
+            while (Environment.TickCount64 < until)
+            {
+                using var cts = new CancellationTokenSource((int)Math.Max(1, until - Environment.TickCount64));
+                byte[]? r;
+                try { r = shortCh.ReadAsync(cts.Token).GetAwaiter().GetResult(); }
+                catch (OperationCanceledException) { break; }
+                if (r is null) break;
+                if (r.Length > 4 && r[0] == ShortReport && r[2] == 0x41 && r[1] is >= 1 and <= 6)
+                    links[r[1]] = (r[4] & 0x40) == 0;
+            }
+            return links;
+        }
 
         byte[]? Raw(byte device, byte feature, byte function, byte[] args)
         {
