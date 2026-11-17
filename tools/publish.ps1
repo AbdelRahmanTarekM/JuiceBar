@@ -10,8 +10,8 @@ dotnet publish (Join-Path $root "src\BFM\BFM.csproj") -c Release -r $Runtime --s
     -p:PublishSingleFile=true -p:DebugType=none -o $dist -nologo -v q
 if ($LASTEXITCODE -ne 0) { throw "publish failed" }
 
-$exe = Join-Path $dist "BFM.exe"
+$exe = Join-Path $dist "JuiceBar.exe"
 $hash = (Get-FileHash $exe -Algorithm SHA256).Hash
-Set-Content (Join-Path $dist "BFM.exe.sha256") "$hash  BFM.exe" -NoNewline -Encoding ascii
+Set-Content (Join-Path $dist "JuiceBar.exe.sha256") "$hash  JuiceBar.exe" -NoNewline -Encoding ascii
 Get-ChildItem $dist | Format-Table Name, Length -AutoSize
 "SHA256 $hash"

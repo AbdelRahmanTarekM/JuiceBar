@@ -8,12 +8,12 @@
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
-    <AssemblyName>BFM</AssemblyName>
+    <AssemblyName>JuiceBar</AssemblyName>
     <RootNamespace>Bfm</RootNamespace>
     <ApplicationHighDpiMode>PerMonitorV2</ApplicationHighDpiMode>
-    <Version>0.2.0</Version>
-    <ApplicationIcon>BFM.ico</ApplicationIcon>
-    <Product>BFM - Battery Bar</Product>
+    <Version>0.3.0</Version>
+    <ApplicationIcon>JuiceBar.ico</ApplicationIcon>
+    <Product>Juice Bar</Product>
     <Description>Battery levels of your wireless devices on the taskbar</Description>
     <IncludeSourceRevisionInInformationalVersion>false</IncludeSourceRevisionInInformationalVersion>
 

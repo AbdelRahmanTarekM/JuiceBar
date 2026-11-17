@@ -25,7 +25,7 @@ internal sealed class SettingsForm : Form
         _monitor = monitor;
         _bar = bar;
 
-        Text = "BFM settings";
+        Text = $"{AppInfo.Name} settings";
         FormBorderStyle = FormBorderStyle.FixedSingle;
         MaximizeBox = false;
         StartPosition = FormStartPosition.CenterScreen;
@@ -269,8 +269,8 @@ internal sealed class SettingsForm : Form
         forget.Margin = new Padding(0, 16, 0, 0);
         forget.Click += (_, _) =>
         {
-            if (MessageBox.Show(this, $"Remove {d.Label} and its battery history from BFM?\nIt comes back if it reports a battery again.",
-                    "BFM", MessageBoxButtons.YesNo, MessageBoxIcon.Question) != DialogResult.Yes) return;
+            if (MessageBox.Show(this, $"Remove {d.Label} and its battery history from {AppInfo.Name}?\nIt comes back if it reports a battery again.",
+                    AppInfo.Name, MessageBoxButtons.YesNo, MessageBoxIcon.Question) != DialogResult.Yes) return;
             _monitor.Forget(d.Id);
             _settings.Devices.Remove(d.Id);
             _settings.Order.Remove(d.Id);

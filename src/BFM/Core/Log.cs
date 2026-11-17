@@ -4,7 +4,7 @@ internal static class Log
 {
     const long MaxBytes = 256 * 1024;
     static readonly object Gate = new();
-    static string FilePath => Path.Combine(Settings.Folder, "bfm.log");
+    static string FilePath => Path.Combine(Settings.Folder, "juicebar.log");
 
     /// <summary>Set by <c>--probe</c>: diagnostic detail goes to the console.</summary>
     public static bool Verbose { get; set; }

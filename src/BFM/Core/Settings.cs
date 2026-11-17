@@ -64,8 +64,38 @@ public sealed class Settings
             Devices.Remove(id);
     }
 
-    public static string Folder { get; } =
-        Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "BFM");
+    static string AppData => Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData);
+
+    public static string Folder { get; } = Path.Combine(AppData, AppInfo.Id);
+
+    /// <summary>
+    /// Moves data from the app's old folder (%APPDATA%\BFM) into the current one, file by file, never
+    /// overwriting anything already there, then removes the old folder once it is empty.
+    /// Call only while no instance under the old name is running.
+    /// </summary>
+    public static void MigrateLegacyFolder()
+    {
+        var old = Path.Combine(AppData, AppInfo.LegacyId);
+        if (!Directory.Exists(old)) return;
+        try
+        {
+            Directory.CreateDirectory(Folder);
+            foreach (var file in Directory.GetFiles(old))
+            {
+                var name = Path.GetFileName(file);
+                if (name.Equals("bfm.log", StringComparison.OrdinalIgnoreCase)) name = "juicebar.log";
+                var target = Path.Combine(Folder, name);
+                if (!File.Exists(target)) File.Move(file, target);
+            }
+            if (Directory.GetFileSystemEntries(old).All(f => f.EndsWith(".log", StringComparison.OrdinalIgnoreCase) || f.EndsWith(".tmp", StringComparison.OrdinalIgnoreCase)))
+                Directory.Delete(old, recursive: true);
+            Log.Write($"migrated settings from {old}");
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            Log.Write("settings migration: " + ex.Message);
+        }
+    }
 
     static string FilePath => Path.Combine(Folder, "settings.json");
 

@@ -1,24 +1,24 @@
-# BFM — battery bar for the Windows taskbar
+# Juice Bar — battery levels on the Windows taskbar
 
 A small always-on-top strip over the empty left side of the Windows 11 taskbar that shows the battery
 level of Bluetooth and USB-dongle peripherals, with quick controls on click.
 
 ## Install
 
-Download `BFM.exe` from the [latest release](https://github.com/AhmedAshrafM/BFM/releases/latest) and run it.
+Download `JuiceBar.exe` from the [latest release](https://github.com/AhmedAshrafM/JuiceBar/releases/latest) and run it.
 It offers to install itself for your account (no admin): it copies itself to
-`%LOCALAPPDATA%\Programs\BFM`, adds a Start menu entry, starts with Windows and appears under
+`%LOCALAPPDATA%\Programs\JuiceBar`, adds a Start menu entry, starts with Windows and appears under
 Settings > Apps > Installed apps for removal. Choose **No** to just run it once.
 
 Requires the [.NET 10 Desktop Runtime](https://dotnet.microsoft.com/download/dotnet/10.0) (Windows asks
 to download it on first run if it's missing).
 
-Once installed, BFM checks GitHub for a new release once a day, verifies its SHA-256 and swaps itself
+Once installed, Juice Bar checks GitHub for a new release once a day, verifies its SHA-256 and swaps itself
 in place (Settings > General > *Install updates automatically*).
 
-Command line: `BFM.exe --install [--quiet]`, `--uninstall [--quiet]`, `--portable` (run without the
-install prompt), `--probe` (prints what every battery source sees, also to `%TEMP%\bfm-probe.txt`).
-Launching BFM while it is already running opens its settings.
+Command line: `JuiceBar.exe --install [--quiet]`, `--uninstall [--quiet]`, `--portable` (run without the
+install prompt), `--probe` (prints what every battery source sees, also to `%TEMP%\juicebar-probe.txt`).
+Launching Juice Bar while it is already running opens its settings.
 
 ## Using it
 
@@ -33,8 +33,8 @@ Launching BFM while it is already running opens its settings.
 - Drag the bar sideways to move it along the taskbar. It follows an auto-hiding taskbar and hides
   while a fullscreen app is in front.
 
-Data lives in `%APPDATA%\BFM`: `settings.json` (settings, per-device preferences, last-known levels),
-`history.json` (14 days of level changes), `bfm.log` (errors).
+Data lives in `%APPDATA%\JuiceBar`: `settings.json` (settings, per-device preferences, last-known levels),
+`history.json` (14 days of level changes), `juicebar.log` (errors). Data from the app's earlier name (`%APPDATA%\BFM`) is moved over on first start, and the old install is removed.
 
 ## Battery sources
 
@@ -55,7 +55,7 @@ Devices reachable over two links (Bluetooth and a receiver) show as one chip.
 
 ```powershell
 dotnet build src\BFM\BFM.csproj -c Release      # dev build, runs without the install prompt
-tools\publish.ps1                                # dist\BFM.exe + BFM.exe.sha256
+tools\publish.ps1                                # dist\JuiceBar.exe + JuiceBar.exe.sha256
 ```
 
 Pushing a tag `vX.Y.Z` runs `.github/workflows/release.yml`, which publishes the exe and checksum to a

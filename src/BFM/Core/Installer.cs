@@ -11,21 +11,23 @@ namespace Bfm.Core;
 
 /// <summary>
 /// Per-user install, autostart and self-update for the single-file build. Nothing here needs admin:
-/// the exe lives in %LOCALAPPDATA%\Programs\BFM and registers itself under HKCU only.
+/// the exe lives in %LOCALAPPDATA%\Programs\JuiceBar and registers itself under HKCU only.
 /// </summary>
 internal static class Installer
 {
     /// <summary>GitHub repository (owner/name) whose latest release is checked for updates.</summary>
-    public const string Repo = "AhmedAshrafM/BFM";
+    public const string Repo = "AhmedAshrafM/JuiceBar";
 
+    const string ExeName = AppInfo.Id + ".exe";
     const string RunKey = @"Software\Microsoft\Windows\CurrentVersion\Run";
-    const string UninstallKey = @"Software\Microsoft\Windows\CurrentVersion\Uninstall\BFM";
+    const string UninstallRoot = @"Software\Microsoft\Windows\CurrentVersion\Uninstall\";
+    const string UninstallKey = UninstallRoot + AppInfo.Id;
 
-    public static string InstallDir { get; } =
-        Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Programs", "BFM");
-    public static string InstalledExe => Path.Combine(InstallDir, "BFM.exe");
-    static string ShortcutPath => Path.Combine(
-        Environment.GetFolderPath(Environment.SpecialFolder.Programs), "BFM - Battery Bar.lnk");
+    static string ProgramsRoot => Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Programs");
+    public static string InstallDir { get; } = Path.Combine(ProgramsRoot, AppInfo.Id);
+    public static string InstalledExe => Path.Combine(InstallDir, ExeName);
+    static string StartMenu => Environment.GetFolderPath(Environment.SpecialFolder.Programs);
+    static string ShortcutPath => Path.Combine(StartMenu, AppInfo.Name + ".lnk");
 
     static string CurrentExe => Environment.ProcessPath ?? InstalledExe;
 
@@ -51,14 +53,42 @@ internal static class Installer
     public static bool IsStartupEnabled()
     {
         using var key = Registry.CurrentUser.OpenSubKey(RunKey);
-        return key?.GetValue("BFM") is string;
+        return key?.GetValue(AppInfo.Id) is string;
     }
 
     public static void SetStartup(bool enable)
     {
         using var key = Registry.CurrentUser.CreateSubKey(RunKey);
-        if (enable) key.SetValue("BFM", $"\"{CurrentExe}\"");
-        else key.DeleteValue("BFM", false);
+        if (enable) key.SetValue(AppInfo.Id, $"\"{CurrentExe}\"");
+        else key.DeleteValue(AppInfo.Id, false);
+    }
+
+    /// <summary>
+    /// Removes what the app installed under its old name (BFM): autostart value, Installed apps entry,
+    /// Start menu shortcut and program folder. Settings are migrated separately by <see cref="Settings.MigrateLegacyFolder"/>.
+    /// Returns true if the old name had autostart enabled, so the new name can inherit it.
+    /// </summary>
+    public static bool RemoveLegacyInstall()
+    {
+        bool hadStartup = false;
+        try
+        {
+            using (var run = Registry.CurrentUser.OpenSubKey(RunKey, writable: true))
+            {
+                hadStartup = run?.GetValue(AppInfo.LegacyId) is string;
+                if (hadStartup) run!.DeleteValue(AppInfo.LegacyId, false);
+            }
+            Registry.CurrentUser.DeleteSubKeyTree(UninstallRoot + AppInfo.LegacyId, false);
+            TryDelete(Path.Combine(StartMenu, "BFM - Battery Bar.lnk"));
+            var oldDir = Path.Combine(ProgramsRoot, AppInfo.LegacyId);
+            if (Directory.Exists(oldDir) && !string.Equals(Path.GetFullPath(oldDir), Path.GetFullPath(InstallDir), StringComparison.OrdinalIgnoreCase))
+                Directory.Delete(oldDir, recursive: true);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            Log.Write("legacy cleanup: " + ex.Message);
+        }
+        return hadStartup;
     }
 
     /// <summary>Keeps an enabled autostart entry pointing at the exe that is actually running.</summary>
@@ -77,13 +107,13 @@ internal static class Installer
     {
         bool upgrade = File.Exists(InstalledExe);
         var text = upgrade
-            ? $"Update the installed BFM to version {Version.ToString(3)}?"
-            : "Install BFM for your account?\n\n" +
-              "• Copies BFM to your user folder (no admin needed)\n" +
+            ? $"Update the installed {AppInfo.Name} to version {Version.ToString(3)}?"
+            : $"Install {AppInfo.Name} for your account?\n\n" +
+              $"• Copies {AppInfo.Name} to your user folder (no admin needed)\n" +
               "• Adds it to the Start menu and starts it with Windows\n" +
               "• Remove it any time from Settings > Apps > Installed apps\n\n" +
               "Choose No to just run it once from here.";
-        var answer = MessageBox.Show(text, "BFM", MessageBoxButtons.YesNoCancel, MessageBoxIcon.Question);
+        var answer = MessageBox.Show(text, AppInfo.Name, MessageBoxButtons.YesNoCancel, MessageBoxIcon.Question);
         if (answer == DialogResult.Cancel) return true;
         if (answer == DialogResult.No) return false;
         Install(quiet: false);
@@ -96,11 +126,13 @@ internal static class Installer
         try
         {
             bool wasRunning = StopOtherInstances();
+            Settings.MigrateLegacyFolder();
+            RemoveLegacyInstall();
             Directory.CreateDirectory(InstallDir);
             if (!IsInstalled) File.Copy(CurrentExe, InstalledExe, overwrite: true);
             CreateShortcut(ShortcutPath, InstalledExe);
             using (var run = Registry.CurrentUser.CreateSubKey(RunKey))
-                run.SetValue("BFM", $"\"{InstalledExe}\"");
+                run.SetValue(AppInfo.Id, $"\"{InstalledExe}\"");
             WriteUninstallEntry();
             if (!quiet || wasRunning) Process.Start(new ProcessStartInfo(InstalledExe) { UseShellExecute = true });
             return 0;
@@ -108,7 +140,7 @@ internal static class Installer
         catch (Exception ex)
         {
             Log.Write("install failed: " + ex);
-            if (!quiet) MessageBox.Show("Install failed: " + ex.Message, "BFM", MessageBoxButtons.OK, MessageBoxIcon.Error);
+            if (!quiet) MessageBox.Show("Install failed: " + ex.Message, AppInfo.Name, MessageBoxButtons.OK, MessageBoxIcon.Error);
             return 1;
         }
     }
@@ -116,9 +148,9 @@ internal static class Installer
     static void WriteUninstallEntry()
     {
         using var key = Registry.CurrentUser.CreateSubKey(UninstallKey);
-        key.SetValue("DisplayName", "BFM - Battery Bar");
+        key.SetValue("DisplayName", AppInfo.Name);
         key.SetValue("DisplayVersion", Version.ToString(3));
-        key.SetValue("Publisher", "BFM");
+        key.SetValue("Publisher", "Ahmed Ashraf");
         key.SetValue("DisplayIcon", InstalledExe);
         key.SetValue("InstallLocation", InstallDir);
         key.SetValue("UninstallString", $"\"{InstalledExe}\" --uninstall");
@@ -131,14 +163,15 @@ internal static class Installer
 
     public static int Uninstall(bool quiet)
     {
-        if (!quiet && MessageBox.Show("Remove BFM from this PC?", "BFM", MessageBoxButtons.YesNo, MessageBoxIcon.Question) != DialogResult.Yes)
+        if (!quiet && MessageBox.Show($"Remove {AppInfo.Name} from this PC?", AppInfo.Name, MessageBoxButtons.YesNo, MessageBoxIcon.Question) != DialogResult.Yes)
             return 1;
-        bool keepData = quiet || MessageBox.Show("Keep your BFM settings and battery history in case you reinstall?", "BFM",
+        bool keepData = quiet || MessageBox.Show($"Keep your {AppInfo.Name} settings and battery history in case you reinstall?", AppInfo.Name,
             MessageBoxButtons.YesNo, MessageBoxIcon.Question) == DialogResult.Yes;
 
         StopOtherInstances();
+        RemoveLegacyInstall();
         using (var run = Registry.CurrentUser.OpenSubKey(RunKey, writable: true))
-            run?.DeleteValue("BFM", false);
+            run?.DeleteValue(AppInfo.Id, false);
         Registry.CurrentUser.DeleteSubKeyTree(UninstallKey, false);
         TryDelete(ShortcutPath);
         if (!keepData)
@@ -160,7 +193,7 @@ internal static class Installer
     static bool StopOtherInstances()
     {
         bool any = false;
-        foreach (var p in Process.GetProcessesByName("BFM"))
+        foreach (var p in Process.GetProcessesByName(AppInfo.Id).Concat(Process.GetProcessesByName(AppInfo.LegacyId)))
         {
             using (p)
             {
@@ -203,8 +236,8 @@ internal static class Installer
         {
             var name = asset.GetProperty("name").GetString();
             var url = asset.GetProperty("browser_download_url").GetString();
-            if (string.Equals(name, "BFM.exe", StringComparison.OrdinalIgnoreCase)) exe = url;
-            else if (string.Equals(name, "BFM.exe.sha256", StringComparison.OrdinalIgnoreCase)) sha = url;
+            if (string.Equals(name, ExeName, StringComparison.OrdinalIgnoreCase)) exe = url;
+            else if (string.Equals(name, ExeName + ".sha256", StringComparison.OrdinalIgnoreCase)) sha = url;
         }
         if (exe is null) return null;
         var notes = root.TryGetProperty("body", out var body) ? body.GetString() ?? "" : "";
@@ -267,7 +300,7 @@ internal static class Installer
     static HttpClient NewClient()
     {
         var http = new HttpClient { Timeout = TimeSpan.FromSeconds(60) };
-        http.DefaultRequestHeaders.UserAgent.ParseAdd($"BFM/{Version.ToString(3)}");
+        http.DefaultRequestHeaders.UserAgent.ParseAdd($"{AppInfo.Id}/{Version.ToString(3)}");
         http.DefaultRequestHeaders.Accept.ParseAdd("application/vnd.github+json");
         return http;
     }

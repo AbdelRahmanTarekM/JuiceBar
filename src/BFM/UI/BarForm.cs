@@ -45,7 +45,7 @@ internal sealed class BarForm : Form
         _monitor = monitor;
         _settings = settings;
 
-        Text = "BFM";
+        Text = AppInfo.Name;
         FormBorderStyle = FormBorderStyle.None;
         ShowInTaskbar = false;
         StartPosition = FormStartPosition.Manual;
@@ -115,7 +115,7 @@ internal sealed class BarForm : Form
         _pollTimer.Start();
         _zOrderTimer.Start();
         _ = _monitor.RefreshAsync(true);
-        if (JustUpdated) ShowBalloon("BFM updated", $"Now running version {Installer.Version.ToString(3)}", ToolTipIcon.Info);
+        if (JustUpdated) ShowBalloon($"{AppInfo.Name} updated", $"Now running version {Installer.Version.ToString(3)}", ToolTipIcon.Info);
     }
 
     [System.ComponentModel.DesignerSerializationVisibility(System.ComponentModel.DesignerSerializationVisibility.Hidden)]
@@ -197,7 +197,7 @@ internal sealed class BarForm : Form
 
         if (visible.Count == 0)
         {
-            var placeholder = new DeviceStatus { Id = "", Name = "BFM — no devices yet", Kind = DeviceKind.Unknown };
+            var placeholder = new DeviceStatus { Id = "", Name = $"{AppInfo.Name} — no devices yet", Kind = DeviceKind.Unknown };
             visible.Add(placeholder);
         }
         if (_audio?.Current is not null)
@@ -520,7 +520,7 @@ internal sealed class BarForm : Form
     void ToggleAudio()
     {
         _tip.Hide(this);
-        if (!AudioSwitch.Toggle(_settings)) ShowBalloon("BFM", "No other playback device to switch to.");
+        if (!AudioSwitch.Toggle(_settings)) ShowBalloon(AppInfo.Name, "No other playback device to switch to.");
         OnDevicesChanged();
     }
 
@@ -808,7 +808,7 @@ internal sealed class BarForm : Form
     async Task RunDeviceAction(Task<bool> action, DeviceStatus device, string verb)
     {
         bool ok = await action;
-        if (!ok) ShowBalloon("BFM", $"Couldn't {verb} {device.Label}. Try Bluetooth settings.");
+        if (!ok) ShowBalloon(AppInfo.Name, $"Couldn't {verb} {device.Label}. Try Bluetooth settings.");
         RefreshSoon(3000);
     }
 
@@ -834,7 +834,7 @@ internal sealed class BarForm : Form
 
     internal void ShowBalloon(string title, string text, ToolTipIcon icon = ToolTipIcon.Warning)
     {
-        _notify ??= new NotifyIcon { Icon = AppIcon(), Text = "BFM" };
+        _notify ??= new NotifyIcon { Icon = AppIcon(), Text = AppInfo.Name };
         _notify.Visible = true;
         _notify.ShowBalloonTip(8000, title, text, icon);
         var t = new System.Windows.Forms.Timer { Interval = 15_000 };

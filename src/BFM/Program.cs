@@ -41,9 +41,9 @@ internal static class Program
         if (Installer.IsSingleFile && !Installer.IsInstalled && !Has("--portable") && Installer.OfferInstall())
             return 0;
 
-        using var mutex = new Mutex(true, @"Local\BFM.BatteryBar", out bool firstInstance);
+        using var mutex = new Mutex(true, $@"Local\{AppInfo.Id}.BatteryBar", out bool firstInstance);
         // After a self-update the old process may still be closing; wait for it rather than exiting.
-        using var showSettings = new EventWaitHandle(false, EventResetMode.AutoReset, @"Local\BFM.ShowSettings");
+        using var showSettings = new EventWaitHandle(false, EventResetMode.AutoReset, $@"Local\{AppInfo.Id}.ShowSettings");
         if (!firstInstance && !(Has("--updated") && WaitForMutex(mutex)))
         {
             AllowSetForegroundWindow(-1);
@@ -51,6 +51,12 @@ internal static class Program
             return 0;
         }
 
+        // The app used to be called BFM; take over its data (and, when installed, its install) once it isn't running.
+        if (System.Diagnostics.Process.GetProcessesByName(AppInfo.LegacyId).Length == 0)
+        {
+            Settings.MigrateLegacyFolder();
+            if (Installer.IsInstalled && Installer.RemoveLegacyInstall()) Installer.SetStartup(true);
+        }
         if (Installer.IsInstalled)
         {
             Installer.CleanupAfterUpdate();

@@ -1,8 +1,8 @@
-# Template: replace the version, URL and SHA-256 (from dist\BFM.exe.sha256) for each release,
-# then submit the three files under manifests/a/AhmedAshrafM/BFM/<version>/ in microsoft/winget-pkgs.
+# Template: replace the version, URL and SHA-256 (from dist\JuiceBar.exe.sha256) for each release,
+# then submit the three files under manifests/a/AhmedAshrafM/JuiceBar/<version>/ in microsoft/winget-pkgs.
 # yaml-language-server: $schema=https://aka.ms/winget-manifest.installer.1.6.0.schema.json
-PackageIdentifier: AhmedAshrafM.BFM
-PackageVersion: 0.2.0
+PackageIdentifier: AhmedAshrafM.JuiceBar
+PackageVersion: 0.3.0
 MinimumOSVersion: 10.0.19041.0
 InstallerType: exe
 Scope: user
@@ -12,16 +12,16 @@ InstallerSwitches:
   Silent: --install --quiet
   SilentWithProgress: --install --quiet
 UpgradeBehavior: install
-ProductCode: BFM
+ProductCode: JuiceBar
 Dependencies:
   PackageDependencies:
     - PackageIdentifier: Microsoft.DotNet.DesktopRuntime.10
 AppsAndFeaturesEntries:
-  - DisplayName: BFM - Battery Bar
-    ProductCode: BFM
+  - DisplayName: Juice Bar
+    ProductCode: JuiceBar
 Installers:
   - Architecture: x64
-    InstallerUrl: https://github.com/AhmedAshrafM/BFM/releases/download/v0.2.0/BFM.exe
+    InstallerUrl: https://github.com/AhmedAshrafM/JuiceBar/releases/download/v0.3.0/JuiceBar.exe
     InstallerSha256: 0000000000000000000000000000000000000000000000000000000000000000
 ManifestType: installer
 ManifestVersion: 1.6.0

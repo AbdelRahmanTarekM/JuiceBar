@@ -4,10 +4,10 @@ using Bfm.Interop;
 
 namespace Bfm;
 
-/// <summary><c>BFM.exe --probe</c>: runs every provider once and writes a diagnostic report.</summary>
+/// <summary><c>JuiceBar.exe --probe</c>: runs every provider once and writes a diagnostic report.</summary>
 internal static class Probe
 {
-    /// <summary><c>BFM.exe --listen VID SECONDS</c>: passively prints every input report on that vendor's
+    /// <summary><c>JuiceBar.exe --listen VID SECONDS</c>: passively prints every input report on that vendor's
     /// vendor-defined collections. Sends nothing to the device.</summary>
     public static int Listen(string vidHex, int seconds)
     {
@@ -36,7 +36,7 @@ internal static class Probe
         Kernel32.AttachConsole(-1);
         Core.Log.Verbose = true;
         var sb = new StringBuilder();
-        sb.AppendLine($"BFM probe {DateTime.Now:yyyy-MM-dd HH:mm:ss}");
+        sb.AppendLine($"Juice Bar probe {DateTime.Now:yyyy-MM-dd HH:mm:ss}");
 
         foreach (var p in Program.CreateProviders())
         {
@@ -75,7 +75,7 @@ internal static class Probe
 
         var text = sb.ToString();
         Console.Write(text);
-        var file = Path.Combine(Path.GetTempPath(), "bfm-probe.txt");
+        var file = Path.Combine(Path.GetTempPath(), "juicebar-probe.txt");
         File.WriteAllText(file, text);
         Console.WriteLine("written to " + file);
         return 0;

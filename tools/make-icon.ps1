@@ -1,5 +1,5 @@
-# Draws the BFM icon (a battery on a dark rounded tile) and writes a multi-size .ico with PNG entries.
-param([string]$Out = "$PSScriptRoot\..\src\BFM\BFM.ico")
+# Draws the Juice Bar icon (a battery on a dark rounded tile) and writes a multi-size .ico with PNG entries.
+param([string]$Out = "$PSScriptRoot\..\src\BFM\JuiceBar.ico")
 Add-Type -AssemblyName System.Drawing
 
 function RoundRect([System.Drawing.Drawing2D.GraphicsPath]$p, [float]$x, [float]$y, [float]$w, [float]$h, [float]$r) {
