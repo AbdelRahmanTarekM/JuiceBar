@@ -226,7 +226,7 @@ internal static class Installer
     public static async Task<Release?> CheckAsync()
     {
         using var http = NewClient();
-        using var doc = JsonDocument.Parse(await http.GetStringAsync($"https://api.github.com/repos/{Repo}/releases/latest"));
+        using var doc = JsonDocument.Parse(await WithRetry(() => http.GetStringAsync($"https://api.github.com/repos/{Repo}/releases/latest")));
         var root = doc.RootElement;
         var tag = root.GetProperty("tag_name").GetString() ?? "";
         if (!System.Version.TryParse(tag.TrimStart('v', 'V'), out var version) || version <= Version) return null;
@@ -253,13 +253,17 @@ internal static class Installer
         if (!IsInstalled) return false;
         var tmp = InstalledExe + ".new";
         using var http = NewClient();
-        await using (var file = File.Create(tmp))
-        await using (var stream = await http.GetStreamAsync(release.ExeUrl))
+        await WithRetry(async () =>
+        {
+            await using var file = File.Create(tmp);
+            await using var stream = await http.GetStreamAsync(release.ExeUrl);
             await stream.CopyToAsync(file);
+            return true;
+        });
 
         if (release.ShaUrl is not null)
         {
-            var expected = (await http.GetStringAsync(release.ShaUrl)).Trim().Split(' ', '\t')[0];
+            var expected = (await WithRetry(() => http.GetStringAsync(release.ShaUrl))).Trim().Split(' ', '\t')[0];
             string actual;
             await using (var file = File.OpenRead(tmp))
                 actual = Convert.ToHexString(await SHA256.HashDataAsync(file));
@@ -297,9 +301,30 @@ internal static class Installer
         Process.Start(new ProcessStartInfo(InstalledExe, extraArg) { UseShellExecute = false });
     }
 
+    // Some networks can't reach one of the addresses GitHub's DNS hands out, and the answer is cached for
+    // about a minute, so the waits between attempts add up to more than that.
+    static readonly TimeSpan[] RetryDelays = { TimeSpan.FromSeconds(20), TimeSpan.FromSeconds(45) };
+
+    static async Task<T> WithRetry<T>(Func<Task<T>> request)
+    {
+        for (int attempt = 0; ; attempt++)
+        {
+            try
+            {
+                return await request();
+            }
+            catch (Exception ex) when (attempt < RetryDelays.Length && ex is HttpRequestException { StatusCode: null } or TaskCanceledException)
+            {
+                Log.Write($"update request failed, retrying: {ex.Message}");
+                await Task.Delay(RetryDelays[attempt]);
+            }
+        }
+    }
+
     static HttpClient NewClient()
     {
-        var http = new HttpClient { Timeout = TimeSpan.FromSeconds(60) };
+        var handler = new SocketsHttpHandler { ConnectTimeout = TimeSpan.FromSeconds(8) };
+        var http = new HttpClient(handler) { Timeout = TimeSpan.FromSeconds(120) };
         http.DefaultRequestHeaders.UserAgent.ParseAdd($"{AppInfo.Id}/{Version.ToString(3)}");
         http.DefaultRequestHeaders.Accept.ParseAdd("application/vnd.github+json");
         return http;

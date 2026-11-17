@@ -11,7 +11,7 @@
     <AssemblyName>JuiceBar</AssemblyName>
     <RootNamespace>Bfm</RootNamespace>
     <ApplicationHighDpiMode>PerMonitorV2</ApplicationHighDpiMode>
-    <Version>0.3.0</Version>
+    <Version>0.3.1</Version>
     <ApplicationIcon>JuiceBar.ico</ApplicationIcon>
     <Product>Juice Bar</Product>
     <AssemblyTitle>Juice Bar</AssemblyTitle>
