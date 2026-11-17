@@ -915,7 +915,10 @@ internal sealed class BarForm : Form
     {
         try
         {
-            if (Environment.ProcessPath is string exe && Icon.ExtractAssociatedIcon(exe) is Icon icon) return icon;
+            // Ask for the tray size so Windows uses the pixel-tuned small image instead of shrinking the 32 px one.
+            if (Environment.ProcessPath is string exe
+                && (Icon.ExtractIcon(exe, 0, SystemInformation.SmallIconSize.Width) ?? Icon.ExtractAssociatedIcon(exe)) is Icon icon)
+                return icon;
         }
         catch (ArgumentException) { }
         return SystemIcons.Information;
