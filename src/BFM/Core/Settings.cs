@@ -60,6 +60,8 @@ public sealed class Settings
     public int QuietTo { get; set; } = 7 * 60;
 
     public bool HealthAlerts { get; set; } = true;
+    /// <summary>Start of the discharge run each device was last flagged for, so each charge notifies at most once.</summary>
+    public Dictionary<string, long> HealthNotified { get; set; } = new();
 
     public bool InQuietHours(DateTime now)
     {

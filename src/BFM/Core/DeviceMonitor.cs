@@ -187,10 +187,19 @@ internal sealed class DeviceMonitor
                     r.Charging = prev.Charging;
                 }
                 r.LastSeen = otherLinkLive ? prev!.LastSeen : r.Connected ? now : prev?.LastSeen;
-                if (r.Battery is int fresh && r.Updated == now)
-                    History.Record(r.Id, fresh, r.Charging == true, now);
-
                 var prefs = _settings.Prefs(r.Id);
+                if (r.Battery is int fresh && r.Updated == now)
+                {
+                    History.Record(r.Id, fresh, r.Charging == true, now);
+                    if (_settings.HealthAlerts && fresh != prev?.Battery && History.Drain(r.Id) is { Faster: true } drain
+                        && _settings.HealthNotified.GetValueOrDefault(r.Id) != drain.CurrentStart)
+                    {
+                        lock (_settings.SyncRoot) _settings.HealthNotified[r.Id] = drain.CurrentStart;
+                        dirty = true;
+                        alerts.Add((Labelled(r, prefs), AlertKind.Health));
+                    }
+                }
+
                 int threshold = prefs.LowAlert ?? _settings.AlertThreshold;
                 if (threshold > 0 && r.Connected && r.Charging != true && r.Battery < threshold
                     && (prev?.Battery is null || prev.Battery >= threshold || !prev.Connected))
@@ -228,7 +237,7 @@ internal sealed class DeviceMonitor
     }
 }
 
-internal enum AlertKind { Low, Full }
+internal enum AlertKind { Low, Full, Health }
 
 internal static class DeviceMonitorOrder
 {

@@ -148,6 +148,11 @@ internal sealed class SettingsForm : Form
         preview.Click += (_, _) => _bar.ShowChargeReminder(always: true);
         col.Controls.Add(preview);
 
+        col.Controls.Add(Heading("Battery health"));
+        col.Controls.Add(Check("Tell me when a device drains much faster than usual", _settings.HealthAlerts,
+            v => { _settings.HealthAlerts = v; Changed(); }));
+        col.Controls.Add(Note($"Compared with its earlier charges ({BatteryHistory.DrainInfo.FasterRatio}× or more), once per charge.\nThe device popup always shows its usual drain."));
+
         col.Controls.Add(Heading("Quiet time"));
         col.Controls.Add(Check("Hold notifications while a fullscreen app or game is open", _settings.QuietFullscreen,
             v => { _settings.QuietFullscreen = v; Changed(); }));

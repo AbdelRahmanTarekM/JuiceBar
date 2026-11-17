@@ -91,6 +91,57 @@ internal sealed class BatteryHistory
         lock (_gate) _dirty |= _data.Remove(id);
     }
 
+    /// <summary>Typical discharge rate across earlier charges versus the current one, in percent per hour.</summary>
+    public readonly record struct DrainInfo(double Typical, double? Current, long CurrentStart)
+    {
+        public const double FasterRatio = 1.5;
+        public bool Faster => Current is double c && c >= Typical * FasterRatio;
+    }
+
+    /// <summary>A gap this long between readings means the device was off or out of range, not draining.</summary>
+    static readonly TimeSpan MaxGap = TimeSpan.FromHours(12);
+
+    /// <summary>
+    /// Splits the history into discharge runs (on battery, level only going down, no long gaps) and compares the
+    /// latest run with the ones before it. Null until there are at least three earlier runs covering six hours.
+    /// The current rate is only given while the device is on battery with two hours and five percent to go on.
+    /// </summary>
+    public DrainInfo? Drain(string id)
+    {
+        var runs = new List<(long Start, long End, int Drop)>();
+        bool onBattery;
+        lock (_gate)
+        {
+            if (!_data.TryGetValue(id, out var list) || list.Count < 2) return null;
+            onBattery = !list[^1].C;
+            int start = 0;
+            for (int i = 1; i <= list.Count; i++)
+            {
+                bool split = i == list.Count || list[i].C || list[i - 1].C || list[i].L > list[i - 1].L + 1
+                             || list[i].T - list[i - 1].T > MaxGap.TotalSeconds;
+                if (!split) continue;
+                if (!list[start].C && i - 1 > start)
+                    runs.Add((list[start].T, list[i - 1].T, list[start].L - list[i - 1].L));
+                start = i;
+            }
+            // A run still in progress ends at the latest reading; anything after that is not part of it.
+            if (runs.Count > 0 && (!onBattery || runs[^1].End != list[^1].T)) onBattery = false;
+        }
+
+        static bool Usable((long Start, long End, int Drop) r, double hours, int drop) =>
+            (r.End - r.Start) / 3600.0 >= hours && r.Drop >= drop;
+
+        var current = onBattery && runs.Count > 0 ? runs[^1] : default;
+        var earlier = (onBattery ? runs.Take(runs.Count - 1) : runs).Where(r => Usable(r, 1, 3)).ToList();
+        double hoursTotal = earlier.Sum(r => (r.End - r.Start) / 3600.0);
+        if (earlier.Count < 3 || hoursTotal < 6) return null;
+        double typical = earlier.Sum(r => r.Drop) / hoursTotal;
+        if (typical <= 0) return null;
+
+        double? now = onBattery && Usable(current, 2, 5) ? current.Drop / ((current.End - current.Start) / 3600.0) : null;
+        return new DrainInfo(typical, now, current.Start);
+    }
+
     /// <summary>
     /// Estimates time left on battery (or to full while charging) from the current run of readings:
     /// a least-squares slope over the samples since the last charge started or stopped.

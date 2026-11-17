@@ -833,6 +833,12 @@ internal sealed class BarForm : Form
     {
         if (kind == AlertKind.Full)
             Notify($"full:{d.Id}", "Fully charged", $"{d.Label} is at 100% — you can unplug it", ToolTipIcon.Info);
+        else if (kind == AlertKind.Health)
+        {
+            if (_monitor.History.Drain(d.Id) is { Current: double now } drain)
+                Notify($"health:{d.Id}", "Draining faster than usual",
+                    $"{d.Label} is losing about {Theme.Rate(now)} this charge, usually {Theme.Rate(drain.Typical)}.", ToolTipIcon.Info);
+        }
         else
             Notify($"low:{d.Id}", "Low battery", $"{d.Label} is at {d.Battery}%", ToolTipIcon.Warning,
                 () => _devices.FirstOrDefault(x => x.Id == d.Id)?.Charging != true);

@@ -64,6 +64,8 @@ internal sealed class FlyoutForm : Form
             _body.Controls.Add(new Label { Text = "Last 7 days", AutoSize = true, ForeColor = Theme.TextDim, Margin = new Padding(0, 0, 0, Scale(2)) });
             _body.Controls.Add(new HistoryChart(samples, TimeSpan.FromDays(7)) { Width = inner, Height = Scale(46), Margin = new Padding(0, 0, 0, Scale(6)) });
         }
+        _health = new Label { AutoSize = true, MaximumSize = new Size(inner, 0), Margin = new Padding(0, 0, 0, Scale(6)), Visible = false };
+        _body.Controls.Add(_health);
         AddControls(inner);
 
         UpdateDevice(device);
@@ -118,7 +120,21 @@ internal sealed class FlyoutForm : Form
             : device.Connected && device.Battery is not null ? "Time left: learning your usage…" : "";
         var detail = device.Detail is null ? "" : device.Detail + "\n";
         _info.Text = $"{detail}{device.TransportLabel} · {state}\n{updated}{(device.Experimental ? " · experimental" : "")}\n{estimate}".TrimEnd();
+
+        var drain = _bar.Monitor.History.Drain(device.Id);
+        _health.Visible = drain is not null;
+        if (drain is { } h)
+        {
+            _health.ForeColor = h.Faster ? Theme.Mid : Theme.TextDim;
+            _health.Text = h.Faster
+                ? $"⚠ Draining faster than usual: {Theme.Rate(h.Current!.Value)} this charge, usually {Theme.Rate(h.Typical)}"
+                : h.Current is double c
+                    ? $"Drain: {Theme.Rate(c)} this charge, usually {Theme.Rate(h.Typical)}"
+                    : $"Usually drains about {Theme.Rate(h.Typical)}";
+        }
     }
+
+    readonly Label _health;
 
     void AddControls(int width)
     {

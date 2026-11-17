@@ -77,6 +77,10 @@ internal static class Theme
         return path;
     }
 
+    /// <summary>A drain rate given in percent per hour, shown per day when it is under 1% an hour.</summary>
+    public static string Rate(double perHour) =>
+        perHour >= 1 ? $"{perHour:0.#}% an hour" : $"{perHour * 24:0.#}% a day";
+
     public static string Duration(TimeSpan t) =>
         t.TotalHours >= 24 ? $"{(int)t.TotalDays} d {t.Hours} h" :
         t.TotalMinutes >= 60 ? $"{(int)t.TotalHours} h {t.Minutes:00} min" : $"{Math.Max(1, (int)t.TotalMinutes)} min";
