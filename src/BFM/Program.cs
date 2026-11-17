@@ -9,6 +9,8 @@ internal static class Program
     internal static IReadOnlyList<IBatteryProvider> CreateProviders() => new IBatteryProvider[]
     {
         new BluetoothProvider(),
+        new DualSenseProvider(),
+        new AirPodsProvider(),
         new HyperXCloud3Provider(),
         new LogitechHidppProvider(),
         new CompxReceiverProvider(),

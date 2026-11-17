@@ -7,8 +7,30 @@ namespace Bfm.Providers;
 /// HyperX Cloud III Wireless over its 2.4 GHz dongle. Protocol from LennardKittner/HyperHeadset:
 /// vendor collection 0xFF13, 62-byte reports with report id 0x66.
 /// </summary>
-internal sealed class HyperXCloud3Provider : IBatteryProvider
+internal sealed class HyperXCloud3Provider : IBatteryProvider, IEventSource
 {
+    readonly Dictionary<string, HidEventWatcher> _watchers = new();
+
+    /// <summary>The headset pushes battery, charging, mute and power-on/off events (ids below 0x80);
+    /// replies to our own queries echo the command id (0x80 and up).</summary>
+    public void EnsureWatching(Action onEvent)
+    {
+        lock (_watchers)
+        {
+            foreach (var pid in ProductIds)
+            {
+                foreach (var ifc in Hid.Enumerate(VendorHp, pid).Where(i => i.UsagePage == 0xFF13))
+                {
+                    if (_watchers.TryGetValue(ifc.Path, out var w) && w.IsAlive) continue;
+                    w?.Dispose();
+                    var started = HidEventWatcher.Start(ifc, r => r.Length > 1 && r[0] == ReportId && r[1] < 0x80, onEvent);
+                    if (started is null) _watchers.Remove(ifc.Path);
+                    else _watchers[ifc.Path] = started;
+                }
+            }
+        }
+    }
+
     const ushort VendorHp = 0x03F0;
     static readonly ushort[] ProductIds = { 0x05B7, 0x0C9D };
 

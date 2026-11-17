@@ -29,12 +29,15 @@ Settings and the last-known battery levels live in `%APPDATA%\BFM\settings.json`
 | Source | Devices | How |
 |---|---|---|
 | Bluetooth | Any paired device that reports battery to Windows (BLE battery service, hands-free) | `DEVPKEY_Bluetooth_Battery` on the device node, polled every 60 s and on device changes |
-| HyperX Cloud III Wireless | 2.4 GHz dongle `03F0:05B7` / `0C9D` | Vendor HID report `66 89` (battery) / `66 8A` (charging) |
-| Logitech receivers | Unifying / Bolt / Lightspeed | HID++ 2.0 features `0x1004`, `0x1000`, `0x1001`; read-only |
+| DualSense / DualSense Edge | Bluetooth or USB cable | Status byte of the controller's input report (hid-playstation layout) |
+| AirPods / Beats | Bluetooth, when Windows shows no battery | Passive BLE scan for Apple proximity broadcasts, ≤6 s every 2 min, only while connected; experimental |
+| HyperX Cloud III Wireless | 2.4 GHz dongle `03F0:05B7` / `0C9D` | Vendor HID report `66 89` (battery) / `66 8A` (charging), plus pushed events |
+| Logitech receivers | Unifying / Bolt / Lightspeed | HID++ 2.0 features `0x1004`, `0x1000`, `0x1001`; read-only; re-read on connect notifications |
 | Compx 2.4 GHz receivers | ATK / VXE / Pulsar style (`3554:*` …) | Report `08 04`, checksummed; experimental |
 
-USB dongles are queried every 5 minutes by default (configurable), and immediately when a device is
-plugged in or removed.
+USB dongles are queried every 5 minutes by default (configurable), immediately when a device is
+plugged in or removed, and within a couple of seconds when the HyperX headset or a Logitech device
+reports a change by itself (an overlapped read stays pending, so listening costs no CPU).
 
 ## Footprint
 

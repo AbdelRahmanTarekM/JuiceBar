@@ -57,9 +57,15 @@ internal sealed class DeviceMonitor
     }
 
     /// <summary>Refreshes on a worker thread. Dongles are only queried when their interval has elapsed or <paramref name="includeDongles"/> is set.</summary>
-    public Task RefreshAsync(bool includeDongles)
+    public Task RefreshAsync(bool includeDongles) => Run(null, includeDongles);
+
+    Task Run(IBatteryProvider? only, bool includeDongles)
     {
-        if (Interlocked.Exchange(ref _busy, 1) == 1) return Task.CompletedTask;
+        if (Interlocked.Exchange(ref _busy, 1) == 1)
+        {
+            if (only is not null) ScheduleEvent(only);
+            return Task.CompletedTask;
+        }
         bool dongles = includeDongles || DateTime.UtcNow - _lastDonglePoll >= TimeSpan.FromMinutes(Math.Max(1, _settings.DonglePollMinutes));
         return Task.Run(() =>
         {
@@ -67,17 +73,18 @@ internal sealed class DeviceMonitor
             {
                 foreach (var p in _providers)
                 {
-                    if (p.IsDongle && !dongles) continue;
+                    if (only is not null ? p != only : p.IsDongle && !dongles) continue;
                     try
                     {
                         Merge(p.Poll());
+                        if (p is IEventSource source) source.EnsureWatching(() => ScheduleEvent(p));
                     }
                     catch (Exception ex)
                     {
                         Log.Write($"{p.Name} poll failed: {ex.Message}");
                     }
                 }
-                if (dongles) _lastDonglePoll = DateTime.UtcNow;
+                if (only is null && dongles) _lastDonglePoll = DateTime.UtcNow;
             }
             finally
             {
@@ -85,6 +92,30 @@ internal sealed class DeviceMonitor
             }
             Changed?.Invoke();
         });
+    }
+
+    readonly Dictionary<IBatteryProvider, System.Threading.Timer> _eventTimers = new();
+
+    /// <summary>A device pushed an event: re-read just that provider shortly, coalescing bursts.</summary>
+    void ScheduleEvent(IBatteryProvider provider)
+    {
+        lock (_eventTimers)
+        {
+            if (_eventTimers.TryGetValue(provider, out var t))
+            {
+                t.Change(1500, Timeout.Infinite);
+                return;
+            }
+            _eventTimers[provider] = new System.Threading.Timer(_ =>
+            {
+                lock (_eventTimers)
+                {
+                    _eventTimers.Remove(provider, out var self);
+                    self?.Dispose();
+                }
+                _ = Run(provider, true);
+            }, null, 1500, Timeout.Infinite);
+        }
     }
 
     void Merge(IReadOnlyList<DeviceStatus> results)
@@ -100,6 +131,9 @@ internal sealed class DeviceMonitor
                 {
                     r.Battery = keep;
                     r.Updated = prev.Updated;
+                    r.Detail ??= prev.Detail;
+                    r.Charging ??= r.Connected ? prev.Charging : null;
+                    r.Experimental |= prev.Experimental;
                 }
                 else if (r.Battery is not null)
                 {

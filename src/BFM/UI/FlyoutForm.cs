@@ -52,7 +52,7 @@ internal sealed class FlyoutForm : Form
         var levelRow = new FlowLayoutPanel { AutoSize = true, WrapContents = false, Margin = new Padding(0, Scale(4), 0, 0) };
         levelRow.Controls.Add(_levelBar);
         levelRow.Controls.Add(_level);
-        _info = new Label { AutoSize = false, Width = inner, Height = Scale(36), ForeColor = Theme.TextDim, Margin = new Padding(0, Scale(4), 0, Scale(6)) };
+        _info = new Label { AutoSize = false, Width = inner, Height = Scale(device.Detail is null ? 36 : 54), ForeColor = Theme.TextDim, Margin = new Padding(0, Scale(4), 0, Scale(6)) };
 
         _body.Controls.Add(_title);
         _body.Controls.Add(levelRow);
@@ -103,7 +103,8 @@ internal sealed class FlyoutForm : Form
         _levelBar.Dim = !device.Connected;
         var state = device.Connected ? (device.Charging == true ? "Charging" : "Connected") : "Not connected";
         var updated = device.Battery is null ? "No battery reading yet" : $"Updated {Theme.Ago(device.Updated)}";
-        _info.Text = $"{device.TransportLabel} · {state}\n{updated}{(device.Experimental ? " · experimental" : "")}";
+        var detail = device.Detail is null ? "" : device.Detail + "\n";
+        _info.Text = $"{detail}{device.TransportLabel} · {state}\n{updated}{(device.Experimental ? " · experimental" : "")}";
     }
 
     void AddControls(int width)

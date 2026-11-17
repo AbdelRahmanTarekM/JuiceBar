@@ -382,9 +382,10 @@ internal sealed class BarForm : Form
         if (d.Id.Length == 0) return "Right-click for options";
         var state = d.Connected ? "Connected" : "Not connected";
         var battery = d.Battery is int b ? $"{b}%" + (d.Charging == true ? " (charging)" : "") : "battery unknown";
+        var detail = d.Detail is null ? "" : "\n" + d.Detail;
         var updated = d.Battery is null ? "" : $"\nUpdated {Theme.Ago(d.Updated)}";
         var note = d.Experimental ? "\nExperimental reading" : "";
-        return $"{d.Name}\n{battery} · {d.TransportLabel} · {state}{updated}{note}";
+        return $"{d.Name}\n{battery} · {d.TransportLabel} · {state}{detail}{updated}{note}";
     }
 
     void ToggleFlyout(DeviceStatus dev, Rectangle anchor)

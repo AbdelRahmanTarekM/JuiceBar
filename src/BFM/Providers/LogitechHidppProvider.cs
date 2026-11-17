@@ -7,8 +7,27 @@ namespace Bfm.Providers;
 /// Logitech Unifying / Bolt / Lightspeed receivers via HID++ 2.0 (as used by Solaar and Options+).
 /// Only read-only functions are called.
 /// </summary>
-internal sealed class LogitechHidppProvider : IBatteryProvider
+internal sealed class LogitechHidppProvider : IBatteryProvider, IEventSource
 {
+    readonly Dictionary<string, HidEventWatcher> _watchers = new();
+
+    /// <summary>Receivers send a short 0x41 report when a paired device connects or drops its link
+    /// (when notifications are enabled, which Logi Options+ does).</summary>
+    public void EnsureWatching(Action onEvent)
+    {
+        lock (_watchers)
+        {
+            foreach (var ifc in Hid.Enumerate(VendorLogitech).Where(i => ReceiverPids.Contains(i.Pid) && i.UsagePage == 0xFF00 && i.Usage == 0x01))
+            {
+                if (_watchers.TryGetValue(ifc.Path, out var w) && w.IsAlive) continue;
+                w?.Dispose();
+                var started = HidEventWatcher.Start(ifc, r => r.Length > 3 && r[0] == ShortReport && r[2] == 0x41, onEvent);
+                if (started is null) _watchers.Remove(ifc.Path);
+                else _watchers[ifc.Path] = started;
+            }
+        }
+    }
+
     const ushort VendorLogitech = 0x046D;
     static readonly HashSet<ushort> ReceiverPids = new()
     {
