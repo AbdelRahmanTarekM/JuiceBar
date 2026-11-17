@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using Bfm.Core;
 using Bfm.Interop;
+using Bfm.Providers;
 using Microsoft.Win32;
 
 namespace Bfm.UI;
@@ -96,7 +97,15 @@ internal sealed class BarForm : Form
         _hook = User32.SetWinEventHook(User32.EventSystemForeground, User32.EventSystemForeground, IntPtr.Zero,
             _foregroundProc, 0, 0, User32.WineventOutOfContext);
         HookTaskbar();
+        _rawMouse = new RawMouse(Handle, 30_000);
+        _rawMouse.Moved += path =>
+        {
+            if (UgreenReceiverProvider.IsReceiverPath(path) && UgreenReceiverProvider.NoteActivity())
+                _ = _monitor.RefreshAsync(false);
+        };
     }
+
+    RawMouse? _rawMouse;
 
     protected override void OnShown(EventArgs e)
     {
@@ -117,6 +126,7 @@ internal sealed class BarForm : Form
         if (_hook != IntPtr.Zero) User32.UnhookWinEvent(_hook);
         if (_trayHook != IntPtr.Zero) User32.UnhookWinEvent(_trayHook);
         _notify?.Dispose();
+        _rawMouse?.Dispose();
         base.OnFormClosed(e);
     }
 
@@ -380,7 +390,9 @@ internal sealed class BarForm : Form
 
     protected override void WndProc(ref Message m)
     {
-        if (m.Msg == WmDeviceChange && (int)m.WParam == DbtDevNodesChanged)
+        if (m.Msg == RawMouse.WmInput)
+            _rawMouse?.Handle(m.LParam);
+        else if (m.Msg == WmDeviceChange && (int)m.WParam == DbtDevNodesChanged)
         {
             _deviceChangeTimer.Stop();
             _deviceChangeTimer.Start();

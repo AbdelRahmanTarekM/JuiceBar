@@ -151,6 +151,8 @@ internal sealed class DeviceMonitor
         }
     }
 
+    static readonly TimeSpan OtherLinkGrace = TimeSpan.FromMinutes(5);
+
     void Merge(IReadOnlyList<DeviceStatus> results)
     {
         var alerts = new List<(DeviceStatus, AlertKind)>();
@@ -174,7 +176,17 @@ internal sealed class DeviceMonitor
                     r.Updated = r.Battery == prev?.Battery && prev?.Updated is not null && !r.Connected ? prev.Updated : now;
                 }
 
-                r.LastSeen = r.Connected ? now : prev?.LastSeen;
+                // One device, two links (e.g. Bluetooth and a 2.4 GHz receiver reporting under the same id):
+                // an idle link saying "not connected" doesn't override the other link that was live recently.
+                bool otherLinkLive = !r.Connected && prev is { Connected: true } && prev.Transport != r.Transport
+                    && prev.LastSeen is DateTime seen && now - seen < OtherLinkGrace;
+                if (otherLinkLive)
+                {
+                    r.Connected = true;
+                    r.Transport = prev!.Transport;
+                    r.Charging = prev.Charging;
+                }
+                r.LastSeen = otherLinkLive ? prev!.LastSeen : r.Connected ? now : prev?.LastSeen;
                 if (r.Battery is int fresh && r.Updated == now)
                     History.Record(r.Id, fresh, r.Charging == true, now);
 

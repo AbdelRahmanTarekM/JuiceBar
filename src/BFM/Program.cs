@@ -15,6 +15,7 @@ internal static class Program
         new HyperXCloud3Provider(),
         new LogitechHidppProvider(),
         new CompxReceiverProvider(),
+        new UgreenReceiverProvider(),
     };
 
     [STAThread]
@@ -58,6 +59,15 @@ internal static class Program
 
         var settings = Settings.Load();
         DualSenseProvider.LightbarFor = id => settings.Prefs(id).Lightbar;
+        UgreenReceiverProvider.FindPartner = () =>
+        {
+            lock (settings.SyncRoot)
+            {
+                var match = settings.Cache.FirstOrDefault(kv => kv.Key.StartsWith("bt:", StringComparison.Ordinal)
+                    && kv.Value.Kind == DeviceKind.Mouse && kv.Value.Name.StartsWith("UGREEN", StringComparison.OrdinalIgnoreCase));
+                return match.Key is null ? null : (match.Key, match.Value.Name);
+            }
+        };
         var monitor = new DeviceMonitor(settings, CreateProviders());
         var bar = new BarForm(monitor, settings) { JustUpdated = Has("--updated") };
         var wait = ThreadPool.RegisterWaitForSingleObject(showSettings,

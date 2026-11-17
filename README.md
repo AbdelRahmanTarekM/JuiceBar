@@ -47,6 +47,8 @@ Data lives in `%APPDATA%\BFM`: `settings.json` (settings, per-device preferences
 | Logitech receivers | Unifying / Bolt / Lightspeed | HID++ 2.0 features `0x1004`, `0x1000`, `0x1001`, plus battery events the device pushes; link state from receiver notifications |
 | Compx 2.4 GHz receivers | Redragon / AULA / ATK / VXE style (`3554:*`) | Keyboard report `13 4A`, mouse report `08 04`, checksummed |
 
+| UGREEN receivers | 2.4 GHz `2B89:0043` (e.g. M571P) | No battery channel exists on the receiver; shows "connected" while the mouse moves through it (raw input, sampled every 30 s) under the Bluetooth pairing's chip, carrying the last Bluetooth reading |
+
 Devices reachable over two links (Bluetooth and a receiver) show as one chip.
 
 ## Build and release
