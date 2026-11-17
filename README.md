@@ -156,6 +156,26 @@ Releases: bump `<Version>` in `src\BFM\BFM.csproj`, commit, and push a tag `vX.Y
 [release workflow](.github/workflows/release.yml) builds the exe and checksum and attaches them to a GitHub
 release, which installed copies pick up within a day. `packaging/winget` has the winget manifest templates.
 
+## Code signing policy
+
+Release builds are signed through the SignPath Foundation once the project is approved; until then
+releases are unsigned (see [Install](#install)).
+
+Free code signing provided by [SignPath.io](https://signpath.io), certificate by [SignPath Foundation](https://signpath.org).
+
+- Committers and reviewers: [the repository's maintainers](https://github.com/AhmedAshrafM/JuiceBar/graphs/contributors) with write access, currently [@AhmedAshrafM](https://github.com/AhmedAshrafM). Pull requests from anyone else are reviewed by a maintainer before merging.
+- Approvers: [@AhmedAshrafM](https://github.com/AhmedAshrafM) (repository owner) approves every signing request.
+- Only binaries built by this repository's [release workflow](.github/workflows/release.yml) on GitHub-hosted runners from tagged source are signed.
+
+## Privacy
+
+This program will not transfer any information to other networked systems unless specifically requested by
+the user or the person installing or operating it, with one exception you can turn off: once a day the installed
+app asks GitHub (`api.github.com`) whether a newer release exists, sending only its version in the request
+header, and downloads the update from GitHub if there is one. Turn this off in *Settings > General > Install
+updates automatically*. Battery readings, device names and history stay on your PC in `%APPDATA%\JuiceBar`.
+Reading AirPods battery only listens to Bluetooth broadcasts nearby; it sends nothing.
+
 ## Contributing
 
 See [CONTRIBUTING.md](CONTRIBUTING.md). Device support is the most useful contribution: the
