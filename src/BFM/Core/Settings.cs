@@ -42,8 +42,13 @@ public sealed class Settings
         return new Settings();
     }
 
+    /// <summary>Guards <see cref="Cache"/>, which the monitor updates off the UI thread while saves serialize it.</summary>
+    [System.Text.Json.Serialization.JsonIgnore]
+    public object SyncRoot { get; } = new();
+
     public void Save()
     {
+        lock (SyncRoot)
         try
         {
             Directory.CreateDirectory(Folder);

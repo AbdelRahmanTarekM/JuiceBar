@@ -34,11 +34,30 @@ internal sealed class DeviceMonitor
         }
     }
 
+    /// <summary>
+    /// Multi-link peripherals (e.g. Logitech Easy-Switch: Bluetooth on one channel, Bolt receiver on another)
+    /// show up once per link. Entries with the same model name and kind but a different transport are one
+    /// device: keep the live link, else the most recently read. Same-transport twins stay separate.
+    /// </summary>
+    static IEnumerable<DeviceStatus> CollapseMultiLink(IEnumerable<DeviceStatus> devices)
+    {
+        foreach (var group in devices.GroupBy(d => (Normalize(d.Name), d.Kind)))
+        {
+            var best = group.OrderByDescending(d => d.Connected).ThenByDescending(d => d.Updated ?? DateTime.MinValue).First();
+            foreach (var d in group)
+                if (d == best || d.Transport == best.Transport)
+                    yield return d;
+        }
+    }
+
+    static string Normalize(string name) =>
+        new string(name.Where(char.IsLetterOrDigit).Select(char.ToLowerInvariant).ToArray());
+
     public IReadOnlyList<DeviceStatus> Snapshot()
     {
         lock (_gate)
         {
-            return _devices.Values
+            return CollapseMultiLink(_devices.Values)
                 .Select(d => d.Clone())
                 .OrderByDescending(d => d.Connected)
                 .ThenBy(d => d.Kind)
@@ -52,7 +71,7 @@ internal sealed class DeviceMonitor
         lock (_gate)
         {
             _devices.Remove(id);
-            _settings.Cache.Remove(id);
+            lock (_settings.SyncRoot) _settings.Cache.Remove(id);
         }
     }
 
@@ -121,6 +140,7 @@ internal sealed class DeviceMonitor
     void Merge(IReadOnlyList<DeviceStatus> results)
     {
         var alerts = new List<DeviceStatus>();
+        bool dirty = false;
         lock (_gate)
         {
             var now = DateTime.Now;
@@ -146,16 +166,21 @@ internal sealed class DeviceMonitor
                     alerts.Add(r.Clone());
 
                 _devices[r.Id] = r;
-                _settings.Cache[r.Id] = new CachedDevice
-                {
-                    Name = r.Name,
-                    Kind = r.Kind,
-                    Transport = r.Transport,
-                    Battery = r.Battery,
-                    Updated = r.Updated,
-                    BluetoothAddress = r.BluetoothAddress,
-                };
+                if (prev is null || prev.Battery != r.Battery || prev.Name != r.Name)
+                    dirty = true;
+                lock (_settings.SyncRoot)
+                    _settings.Cache[r.Id] = new CachedDevice
+                    {
+                        Name = r.Name,
+                        Kind = r.Kind,
+                        Transport = r.Transport,
+                        Battery = r.Battery,
+                        Updated = r.Updated,
+                        BluetoothAddress = r.BluetoothAddress,
+                    };
             }
+            // Persist on change so a killed process or a shutdown doesn't forget devices that are now asleep.
+            if (dirty) _settings.Save();
         }
         foreach (var a in alerts) LowBattery?.Invoke(a);
     }
