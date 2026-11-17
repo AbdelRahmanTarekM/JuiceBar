@@ -16,6 +16,9 @@ internal static class Theme
     public static readonly Color Mid = Color.FromArgb(252, 185, 0);
     public static readonly Color Low = Color.FromArgb(255, 99, 97);
     public static readonly Color Dim = Color.FromArgb(105, 105, 105);
+    public static readonly Color Edge = Color.FromArgb(58, 58, 58);
+    public static readonly Color EdgeHover = Color.FromArgb(84, 84, 84);
+    public static readonly Color Accent = Color.FromArgb(118, 185, 237);
 
     public static Color ForLevel(int? level, bool dim) =>
         dim || level is null ? Dim : level > 50 ? Good : level >= 20 ? Mid : Low;
@@ -47,15 +50,36 @@ internal static class Theme
 
     public static void Rounded(Graphics g, Brush brush, RectangleF r, float radius)
     {
-        using var path = new System.Drawing.Drawing2D.GraphicsPath();
-        float d = radius * 2;
+        using var path = RoundedPath(r, radius);
+        g.FillPath(brush, path);
+    }
+
+    public static void RoundedOutline(Graphics g, Pen pen, RectangleF r, float radius)
+    {
+        using var path = RoundedPath(r, radius);
+        g.DrawPath(pen, path);
+    }
+
+    static System.Drawing.Drawing2D.GraphicsPath RoundedPath(RectangleF r, float radius)
+    {
+        var path = new System.Drawing.Drawing2D.GraphicsPath();
+        float d = Math.Min(radius * 2, Math.Min(r.Width, r.Height));
+        if (d <= 0)
+        {
+            path.AddRectangle(r);
+            return path;
+        }
         path.AddArc(r.X, r.Y, d, d, 180, 90);
         path.AddArc(r.Right - d, r.Y, d, d, 270, 90);
         path.AddArc(r.Right - d, r.Bottom - d, d, d, 0, 90);
         path.AddArc(r.X, r.Bottom - d, d, d, 90, 90);
         path.CloseFigure();
-        g.FillPath(brush, path);
+        return path;
     }
+
+    public static string Duration(TimeSpan t) =>
+        t.TotalHours >= 24 ? $"{(int)t.TotalDays} d {t.Hours} h" :
+        t.TotalMinutes >= 60 ? $"{(int)t.TotalHours} h {t.Minutes:00} min" : $"{Math.Max(1, (int)t.TotalMinutes)} min";
 }
 
 internal sealed class DarkMenuColors : ProfessionalColorTable

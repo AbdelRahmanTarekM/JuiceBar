@@ -13,7 +13,9 @@ internal sealed class DeviceMonitor
     int _busy;
 
     public event Action? Changed;
-    public event Action<DeviceStatus>? LowBattery;
+    public event Action<DeviceStatus, AlertKind>? Alert;
+
+    public BatteryHistory History { get; } = BatteryHistory.Load();
 
     public DeviceMonitor(Settings settings, IReadOnlyList<IBatteryProvider> providers)
     {
@@ -33,6 +35,7 @@ internal sealed class DeviceMonitor
                 Battery = c.Battery,
                 Updated = c.Updated,
                 BluetoothAddress = c.BluetoothAddress,
+                LastSeen = c.LastSeen,
             };
         }
     }
@@ -60,11 +63,18 @@ internal sealed class DeviceMonitor
     {
         lock (_gate)
         {
+            var order = _settings.Order;
             return CollapseMultiLink(_devices.Values)
-                .Select(d => d.Clone())
-                .OrderByDescending(d => d.Connected)
+                .Select(d =>
+                {
+                    var c = d.Clone();
+                    c.CustomName = _settings.Prefs(d.Id).Name;
+                    return c;
+                })
+                .OrderBy(d => order.IndexOf(d.Id) is var i && i >= 0 ? i : int.MaxValue)
+                .ThenByDescending(d => d.Connected)
                 .ThenBy(d => d.Kind)
-                .ThenBy(d => d.Name, StringComparer.OrdinalIgnoreCase)
+                .ThenBy(d => d.Label, StringComparer.OrdinalIgnoreCase)
                 .ToList();
         }
     }
@@ -75,6 +85,7 @@ internal sealed class DeviceMonitor
         {
             _devices.Remove(id);
             lock (_settings.SyncRoot) _settings.Cache.Remove(id);
+            History.Forget(id);
         }
     }
 
@@ -142,7 +153,7 @@ internal sealed class DeviceMonitor
 
     void Merge(IReadOnlyList<DeviceStatus> results)
     {
-        var alerts = new List<DeviceStatus>();
+        var alerts = new List<(DeviceStatus, AlertKind)>();
         bool dirty = false;
         lock (_gate)
         {
@@ -163,13 +174,20 @@ internal sealed class DeviceMonitor
                     r.Updated = r.Battery == prev?.Battery && prev?.Updated is not null && !r.Connected ? prev.Updated : now;
                 }
 
-                int threshold = _settings.AlertThreshold;
+                r.LastSeen = r.Connected ? now : prev?.LastSeen;
+                if (r.Battery is int fresh && r.Updated == now)
+                    History.Record(r.Id, fresh, r.Charging == true, now);
+
+                var prefs = _settings.Prefs(r.Id);
+                int threshold = prefs.LowAlert ?? _settings.AlertThreshold;
                 if (threshold > 0 && r.Connected && r.Charging != true && r.Battery < threshold
                     && (prev?.Battery is null || prev.Battery >= threshold || !prev.Connected))
-                    alerts.Add(r.Clone());
+                    alerts.Add((Labelled(r, prefs), AlertKind.Low));
+                if (prefs.FullAlert && r.Connected && r.Battery == 100 && prev?.Battery is < 100)
+                    alerts.Add((Labelled(r, prefs), AlertKind.Full));
 
                 _devices[r.Id] = r;
-                if (prev is null || prev.Battery != r.Battery || prev.Name != r.Name)
+                if (prev is null || prev.Battery != r.Battery || prev.Name != r.Name || prev.Connected != r.Connected || prev.Charging != r.Charging)
                     dirty = true;
                 lock (_settings.SyncRoot)
                     _settings.Cache[r.Id] = new CachedDevice
@@ -180,11 +198,42 @@ internal sealed class DeviceMonitor
                         Battery = r.Battery,
                         Updated = r.Updated,
                         BluetoothAddress = r.BluetoothAddress,
+                        LastSeen = r.LastSeen,
                     };
             }
             // Persist on change so a killed process or a shutdown doesn't forget devices that are now asleep.
-            if (dirty) _settings.Save();
+            if (dirty)
+            {
+                _settings.Save();
+                History.SaveIfDirty();
+            }
         }
-        foreach (var a in alerts) LowBattery?.Invoke(a);
+        foreach (var (d, kind) in alerts) Alert?.Invoke(d, kind);
+    }
+
+    static DeviceStatus Labelled(DeviceStatus d, DevicePrefs prefs)
+    {
+        var c = d.Clone();
+        c.CustomName = prefs.Name;
+        return c;
+    }
+}
+
+internal enum AlertKind { Low, Full }
+
+internal static class DeviceMonitorOrder
+{
+    /// <summary>Moves a device one place left or right in the user's chip order, materialising the current order first.</summary>
+    public static void Move(Settings settings, IReadOnlyList<DeviceStatus> visible, string id, int delta)
+    {
+        var order = visible.Select(d => d.Id).ToList();
+        foreach (var known in settings.Order)
+            if (!order.Contains(known)) order.Add(known);
+        int i = order.IndexOf(id);
+        int j = Math.Clamp(i + delta, 0, order.Count - 1);
+        if (i < 0 || i == j) return;
+        order.RemoveAt(i);
+        order.Insert(j, id);
+        settings.Order = order;
     }
 }

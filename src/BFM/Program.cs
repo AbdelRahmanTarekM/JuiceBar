@@ -19,17 +19,46 @@ internal static class Program
     [STAThread]
     static int Main(string[] args)
     {
-        if (args.Contains("--probe", StringComparer.OrdinalIgnoreCase))
-            return Probe.Run();
+        bool Has(string flag) => args.Contains(flag, StringComparer.OrdinalIgnoreCase);
 
-        using var mutex = new Mutex(true, @"Local\BFM.BatteryBar", out bool firstInstance);
-        if (!firstInstance) return 0;
+        if (Has("--probe"))
+            return Probe.Run();
+        if (args.Length >= 3 && args[0].Equals("--listen", StringComparison.OrdinalIgnoreCase))
+            return Probe.Listen(args[1], int.Parse(args[2]));
 
         ApplicationConfiguration.Initialize();
+        if (Has("--uninstall"))
+            return Installer.Uninstall(Has("--quiet"));
+        if (Installer.IsSingleFile && !Installer.IsInstalled && !Has("--portable") && Installer.OfferInstall())
+            return 0;
+
+        using var mutex = new Mutex(true, @"Local\BFM.BatteryBar", out bool firstInstance);
+        // After a self-update the old process may still be closing; wait for it rather than exiting.
+        if (!firstInstance && !(Has("--updated") && WaitForMutex(mutex))) return 0;
+
+        if (Installer.IsInstalled)
+        {
+            Installer.CleanupAfterUpdate();
+            Installer.RepairStartup();
+        }
+
         var settings = Settings.Load();
+        DualSenseProvider.LightbarFor = id => settings.Prefs(id).Lightbar;
         var monitor = new DeviceMonitor(settings, CreateProviders());
-        Application.Run(new BarForm(monitor, settings));
+        Application.Run(new BarForm(monitor, settings) { JustUpdated = Has("--updated") });
         settings.Save();
         return 0;
+    }
+
+    static bool WaitForMutex(Mutex mutex)
+    {
+        try
+        {
+            return mutex.WaitOne(TimeSpan.FromSeconds(15));
+        }
+        catch (AbandonedMutexException)
+        {
+            return true;
+        }
     }
 }

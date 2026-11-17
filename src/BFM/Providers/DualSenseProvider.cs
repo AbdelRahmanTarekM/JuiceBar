@@ -19,7 +19,99 @@ internal sealed class DualSenseProvider : IBatteryProvider
     public string Name => "DualSense";
     public bool IsDongle => false;
 
+    /// <summary>Looks up the user's lightbar colour (RRGGBB) for a device id; set by the app.</summary>
+    public static Func<string, string?>? LightbarFor { get; set; }
+
+    /// <summary>Colour last sent per device; cleared when the controller goes away so it is re-sent on reconnect.</summary>
+    static readonly Dictionary<string, string> Applied = new();
+    static byte _btSequence;
+
     public IReadOnlyList<DeviceStatus> Poll()
+    {
+        var list = Read();
+        lock (Applied)
+        {
+            foreach (var gone in Applied.Keys.Where(id => list.All(d => d.Id != id)).ToList())
+                Applied.Remove(gone);
+        }
+        foreach (var d in list)
+        {
+            if (LightbarFor?.Invoke(d.Id) is not string hex) continue;
+            lock (Applied)
+                if (Applied.TryGetValue(d.Id, out var sent) && sent == hex) continue;
+            SetLightbar(d.Id, hex);
+        }
+        return list;
+    }
+
+    /// <summary>Sets the lightbar of the controller with this device id. Games that drive the lightbar override it while running.</summary>
+    public static bool SetLightbar(string id, string hex)
+    {
+        int rgb = Convert.ToInt32(hex, 16);
+        foreach (var pid in ProductIds)
+        foreach (var ifc in Hid.Enumerate(Sony, pid, includeBluetooth: true).Where(i => i.UsagePage == 0x01 && i.Usage == 0x05))
+        {
+            var addr = ifc.IsBluetooth ? Hid.GetBluetoothAddress(ifc.Path) : null;
+            if ((addr is null ? "dualsense:usb" : "bt:" + addr) != id) continue;
+            using var ch = HidChannel.Open(ifc);
+            if (ch is null) return false;
+            // First release the firmware's own lightbar animation, then set the colour (as hid-playstation does).
+            bool ok = ch.Write(OutputReport(ifc.IsBluetooth, c =>
+            {
+                c[38] = 0x02; // valid_flag2: lightbar setup control
+                c[41] = 0x02; // lightbar_setup: light out
+            }));
+            ok &= ch.Write(OutputReport(ifc.IsBluetooth, c =>
+            {
+                c[1] = 0x04;  // valid_flag1: lightbar colour
+                c[44] = (byte)(rgb >> 16);
+                c[45] = (byte)(rgb >> 8);
+                c[46] = (byte)rgb;
+            }));
+            Log.Debug($"dualsense {id}: lightbar {hex} {(ok ? "sent" : "failed")}");
+            if (ok) lock (Applied) Applied[id] = hex;
+            return ok;
+        }
+        return false;
+    }
+
+    /// <summary>
+    /// Builds an output report around the 47-byte "common" block. USB: report 0x02 with the block at byte 1.
+    /// Bluetooth: report 0x31, sequence tag, tag 0x10, the block at byte 3, CRC-32 (seeded with 0xA2) in the last 4 bytes.
+    /// </summary>
+    static byte[] OutputReport(bool bluetooth, Action<Span<byte>> fill)
+    {
+        if (!bluetooth)
+        {
+            var usb = new byte[48];
+            usb[0] = 0x02;
+            fill(usb.AsSpan(1, 47));
+            return usb;
+        }
+        var bt = new byte[78];
+        bt[0] = 0x31;
+        bt[1] = (byte)((_btSequence++ & 0x0F) << 4);
+        bt[2] = 0x10;
+        fill(bt.AsSpan(3, 47));
+        uint crc = Crc32(0xA2, bt.AsSpan(0, 74));
+        BitConverter.TryWriteBytes(bt.AsSpan(74), crc);
+        return bt;
+    }
+
+    static uint Crc32(byte seed, ReadOnlySpan<byte> data)
+    {
+        uint crc = 0xFFFFFFFF;
+        void Feed(byte b)
+        {
+            crc ^= b;
+            for (int k = 0; k < 8; k++) crc = (crc >> 1) ^ (0xEDB88320u & (uint)-(int)(crc & 1));
+        }
+        Feed(seed);
+        foreach (var b in data) Feed(b);
+        return ~crc;
+    }
+
+    static List<DeviceStatus> Read()
     {
         var list = new List<DeviceStatus>();
         foreach (var pid in ProductIds)

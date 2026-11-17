@@ -14,8 +14,6 @@ internal sealed class BarForm : Form
 
     const int WmDeviceChange = 0x0219, WmDisplayChange = 0x007E, WmSettingChange = 0x001A, WmDpiChanged = 0x02E0;
     const int DbtDevNodesChanged = 0x0007;
-    const string RunKey = @"Software\Microsoft\Windows\CurrentVersion\Run";
-
     readonly DeviceMonitor _monitor;
     readonly Settings _settings;
     readonly List<(Rectangle Rect, DeviceStatus Dev)> _chips = new();
@@ -60,9 +58,13 @@ internal sealed class BarForm : Form
         LayoutChips();
 
         _monitor.Changed += () => BeginInvokeSafe(OnDevicesChanged);
-        _monitor.LowBattery += d => BeginInvokeSafe(() => ShowLowBattery(d));
+        _monitor.Alert += (d, kind) => BeginInvokeSafe(() => ShowAlert(d, kind));
 
-        _pollTimer.Tick += (_, _) => _ = _monitor.RefreshAsync(false);
+        _pollTimer.Tick += (_, _) =>
+        {
+            _ = _monitor.RefreshAsync(false);
+            if (UpdateDue()) _ = CheckForUpdateAsync(manual: false);
+        };
         _zOrderTimer.Tick += (_, _) => KeepOnTop();
         _deviceChangeTimer.Tick += (_, _) =>
         {
@@ -104,7 +106,11 @@ internal sealed class BarForm : Form
         _pollTimer.Start();
         _zOrderTimer.Start();
         _ = _monitor.RefreshAsync(true);
+        if (JustUpdated) ShowBalloon("BFM updated", $"Now running version {Installer.Version.ToString(3)}", ToolTipIcon.Info);
     }
+
+    [System.ComponentModel.DesignerSerializationVisibility(System.ComponentModel.DesignerSerializationVisibility.Hidden)]
+    public bool JustUpdated { get; init; }
 
     protected override void OnFormClosed(FormClosedEventArgs e)
     {
@@ -129,12 +135,36 @@ internal sealed class BarForm : Form
 
     int S(float v) => (int)Math.Round(v * _scale);
 
-    IEnumerable<DeviceStatus> VisibleDevices() =>
-        _devices.Where(d => !_settings.Hidden.Contains(d.Id) && (d.Connected || _settings.ShowDisconnected));
+    const string AudioChipId = "@audio";
+    AudioSwitch.State? _audio;
+
+    IEnumerable<DeviceStatus> VisibleDevices()
+    {
+        var shown = _devices.Where(d => !_settings.Hidden.Contains(d.Id) && (d.Connected || _settings.ShowDisconnected)).ToList();
+        if (!_settings.Compact || _settings.CompactHideAbove <= 0 || shown.Count == 0) return shown;
+        var lowest = shown.Where(d => d.Battery is not null).MinBy(d => d.Battery);
+        return shown.Where(d => d == lowest || d.Charging == true || d.Battery is null || d.Battery <= _settings.CompactHideAbove);
+    }
+
+    void RefreshAudio()
+    {
+        if (!_settings.AudioChip)
+        {
+            _audio = null;
+            return;
+        }
+        try { _audio = AudioSwitch.Read(_settings); }
+        catch (Exception ex)
+        {
+            _audio = null;
+            Log.Write("audio read failed: " + ex.Message);
+        }
+    }
 
     void OnDevicesChanged()
     {
         _devices = _monitor.Snapshot();
+        RefreshAudio();
         if (!_trimmedOnce)
         {
             _trimmedOnce = true;
@@ -152,7 +182,7 @@ internal sealed class BarForm : Form
     {
         _chips.Clear();
         int x = S(2), h = S(30), y = S(2);
-        int pad = S(9), iconW = S(16), gap = S(4);
+        int pad = S(_settings.Compact ? 6 : 9), iconW = S(16), gap = S(_settings.Compact ? 3 : 4);
         var visible = VisibleDevices().ToList();
 
         if (visible.Count == 0)
@@ -160,19 +190,30 @@ internal sealed class BarForm : Form
             var placeholder = new DeviceStatus { Id = "", Name = "BFM — no devices yet", Kind = DeviceKind.Unknown };
             visible.Add(placeholder);
         }
+        if (_audio?.Current is not null)
+            visible.Add(new DeviceStatus { Id = AudioChipId, Name = _audio.Current.Name, Kind = DeviceKind.Unknown, Connected = true });
 
         foreach (var d in visible)
         {
             var text = ChipText(d);
-            var textW = TextRenderer.MeasureText(text, _font, Size.Empty, TextFormatFlags.NoPadding).Width;
-            int w = pad + iconW + S(5) + textW + (d.Charging == true ? S(10) : 0) + pad;
+            var textW = text.Length == 0 ? 0 : TextRenderer.MeasureText(text, _font, Size.Empty, TextFormatFlags.NoPadding).Width + S(5);
+            int w = pad + iconW + textW + (d.Charging == true ? S(10) : 0) + pad;
             _chips.Add((new Rectangle(x, y, w, h), d));
             x += w + gap;
         }
         ClientSize = new Size(x - gap + S(2), h + S(4));
     }
 
-    static string ChipText(DeviceStatus d) => d.Id.Length == 0 ? "--" : d.Battery is int b ? $"{b}%" : "--";
+    string ChipText(DeviceStatus d)
+    {
+        if (d.Id == AudioChipId) return _settings.Compact ? "" : AudioSwitch.Short(d.Name);
+        if (d.Id.Length == 0) return "--";
+        if (d.Battery is not int b) return "--";
+        return _settings.Compact ? $"{b}" : $"{b}%";
+    }
+
+    string ChipGlyph(DeviceStatus d) =>
+        d.Id == AudioChipId ? (_audio?.CurrentIsHeadset == true ? "\uE7F6" : "\uE767") : Theme.Glyph(d.Kind);
 
     protected override void OnPaint(PaintEventArgs e)
     {
@@ -183,35 +224,45 @@ internal sealed class BarForm : Form
         {
             var (r, d) = _chips[i];
             bool dim = !d.Connected;
-            using (var bg = new SolidBrush(i == _hover ? Theme.ChipHover : Theme.Chip))
+            bool audio = d.Id == AudioChipId;
+            var bgColor = i == _hover ? Theme.ChipHover : Theme.Chip;
+            using (var bg = new SolidBrush(bgColor))
                 Theme.Rounded(g, bg, r, S(6));
+            using (var edge = new Pen(i == _hover ? Theme.EdgeHover : Theme.Edge))
+                Theme.RoundedOutline(g, edge, new RectangleF(r.X + 0.5f, r.Y + 0.5f, r.Width - 1, r.Height - 1), S(6));
 
-            var fg = dim ? Theme.TextDim : Theme.Text;
-            int pad = S(9), iconW = S(16);
-            var iconRect = new Rectangle(r.X + pad, r.Y, iconW, r.Height - S(3));
-            TextRenderer.DrawText(g, Theme.Glyph(d.Kind), _iconFont, iconRect, fg, Theme.Chip,
+            int threshold = d.Id.Length > 0 && !audio ? (_settings.Prefs(d.Id).LowAlert ?? _settings.AlertThreshold) : 0;
+            bool low = !dim && d.Charging != true && d.Battery is int lv && threshold > 0 && lv < threshold;
+            var fg = dim ? Theme.TextDim : low ? Theme.Low : Theme.Text;
+            int pad = S(_settings.Compact ? 6 : 9), iconW = S(16);
+            var iconRect = new Rectangle(r.X + pad, r.Y, iconW, r.Height - S(audio ? 1 : 3));
+            TextRenderer.DrawText(g, ChipGlyph(d), _iconFont, iconRect, dim ? Theme.TextDim : audio ? Theme.Accent : Theme.Text, bgColor,
                 TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter | TextFormatFlags.NoPadding);
 
-            var textRect = new Rectangle(iconRect.Right + S(5), r.Y, r.Right - iconRect.Right - S(5) - pad, r.Height - S(3));
-            TextRenderer.DrawText(g, ChipText(d), _font, textRect, fg, Theme.Chip,
-                TextFormatFlags.Left | TextFormatFlags.VerticalCenter | TextFormatFlags.NoPadding);
+            var text = ChipText(d);
+            if (text.Length > 0)
+            {
+                var textRect = new Rectangle(iconRect.Right + S(5), r.Y, r.Right - iconRect.Right - S(5) - pad, r.Height - S(audio ? 1 : 3));
+                TextRenderer.DrawText(g, text, _font, textRect, fg, bgColor,
+                    TextFormatFlags.Left | TextFormatFlags.VerticalCenter | TextFormatFlags.NoPadding);
+            }
 
             if (d.Charging == true)
             {
                 var boltRect = new Rectangle(r.Right - pad - S(10), r.Y, S(10), r.Height - S(3));
-                TextRenderer.DrawText(g, Theme.Bolt, _boltFont, boltRect, Theme.Mid, Theme.Chip,
+                TextRenderer.DrawText(g, Theme.Bolt, _boltFont, boltRect, Theme.Mid, bgColor,
                     TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter | TextFormatFlags.NoPadding);
             }
 
-            if (d.Id.Length > 0)
+            if (d.Id.Length > 0 && !audio)
             {
-                var track = new RectangleF(r.X + pad, r.Bottom - S(5), r.Width - pad * 2, S(2));
+                var track = new RectangleF(r.X + pad, r.Bottom - S(6), r.Width - pad * 2, S(3));
                 using var trackBrush = new SolidBrush(Theme.Track);
-                g.FillRectangle(trackBrush, track);
-                if (d.Battery is int level)
+                Theme.Rounded(g, trackBrush, track, track.Height / 2);
+                if (d.Battery is int level && level > 0)
                 {
                     using var fill = new SolidBrush(Theme.ForLevel(level, dim));
-                    g.FillRectangle(fill, track.X, track.Y, track.Width * level / 100f, track.Height);
+                    Theme.Rounded(g, fill, new RectangleF(track.X, track.Y, Math.Max(track.Height, track.Width * level / 100f), track.Height), track.Height / 2);
                 }
             }
         }
@@ -424,7 +475,8 @@ internal sealed class BarForm : Form
         if (e.Button == MouseButtons.Right)
         {
             int at = HitTest(e.Location);
-            ShowMenu(at >= 0 && _chips[at].Dev.Id.Length > 0 ? _chips[at].Dev : null);
+            if (at >= 0 && _chips[at].Dev.Id == AudioChipId) ShowAudioMenu();
+            else ShowMenu(at >= 0 && _chips[at].Dev.Id.Length > 0 ? _chips[at].Dev : null);
             return;
         }
         if (e.Button != MouseButtons.Left) return;
@@ -445,18 +497,155 @@ internal sealed class BarForm : Form
             ShowMenu();
             return;
         }
+        if (dev.Id == AudioChipId)
+        {
+            ToggleAudio();
+            return;
+        }
         ToggleFlyout(dev, RectangleToScreen(rect));
     }
 
-    static string TooltipFor(DeviceStatus d)
+    void ToggleAudio()
+    {
+        _tip.Hide(this);
+        if (!AudioSwitch.Toggle(_settings)) ShowBalloon("BFM", "No other playback device to switch to.");
+        OnDevicesChanged();
+    }
+
+    string TooltipFor(DeviceStatus d)
     {
         if (d.Id.Length == 0) return "Right-click for options";
-        var state = d.Connected ? "Connected" : "Not connected";
+        if (d.Id == AudioChipId)
+            return $"Playing on {d.Name}" + (_audio?.Next is { } next ? $"\nClick to switch to {next.Name}" : "") + "\nRight-click to choose";
+        var state = d.Connected ? "Connected" : $"Not connected · last seen {Theme.Ago(d.LastSeen)}";
         var battery = d.Battery is int b ? $"{b}%" + (d.Charging == true ? " (charging)" : "") : "battery unknown";
+        var estimate = d.Battery is int lvl && d.Connected && _monitor.History.Estimate(d.Id, lvl, d.Charging == true) is { } left
+            ? $"\n{(d.Charging == true ? "Full in" : "About")} {Theme.Duration(left)}{(d.Charging == true ? "" : " left")}" : "";
         var detail = d.Detail is null ? "" : "\n" + d.Detail;
         var updated = d.Battery is null ? "" : $"\nUpdated {Theme.Ago(d.Updated)}";
         var note = d.Experimental ? "\nExperimental reading" : "";
-        return $"{d.Name}\n{battery} · {d.TransportLabel} · {state}{detail}{updated}{note}";
+        return $"{d.Label}\n{battery} · {d.TransportLabel}\n{state}{estimate}{detail}{updated}{note}";
+    }
+
+    void ShowAudioMenu()
+    {
+        _tip.Hide(this);
+        var menu = NewMenu();
+        var current = CoreAudio.GetDefaultId(render: true);
+        foreach (var o in CoreAudio.List(render: true))
+        {
+            var item = new ToolStripMenuItem(o.Name) { Checked = o.Id == current };
+            item.Click += (_, _) =>
+            {
+                CoreAudio.SetDefault(o.Id);
+                OnDevicesChanged();
+            };
+            menu.Items.Add(item);
+        }
+        menu.Items.Add(new ToolStripSeparator());
+        menu.Items.Add("Choose the two devices to switch between…", null, (_, _) => OpenSettings(SettingsForm.Page.Audio));
+        menu.Items.Add("Sound settings", null, (_, _) => OpenUri("ms-settings:sound"));
+        menu.Items.Add("Hide this button", null, (_, _) =>
+        {
+            _settings.AudioChip = false;
+            _settings.Save();
+            OnDevicesChanged();
+        });
+        ShowMenuAtCursor(menu);
+    }
+
+    ContextMenuStrip NewMenu() => new()
+    {
+        Renderer = new ToolStripProfessionalRenderer(new DarkMenuColors()),
+        ForeColor = Theme.Text,
+        ShowImageMargin = false,
+        ShowCheckMargin = true,
+    };
+
+    void ShowMenuAtCursor(ContextMenuStrip menu)
+    {
+        foreach (ToolStripItem i in menu.Items) i.ForeColor = Theme.Text;
+        menu.Closed += (_, _) => BeginInvokeSafe(menu.Dispose);
+        User32.SetForegroundWindow(Handle);
+        menu.Show(Cursor.Position, ToolStripDropDownDirection.AboveRight);
+    }
+
+    SettingsForm? _settingsForm;
+
+    internal void OpenSettings(SettingsForm.Page page = SettingsForm.Page.General)
+    {
+        if (_settingsForm is { IsDisposed: false })
+        {
+            _settingsForm.ShowPage(page);
+            _settingsForm.Activate();
+            return;
+        }
+        _settingsForm = new SettingsForm(_settings, _monitor, this, page);
+        _settingsForm.FormClosed += (_, _) =>
+        {
+            _settingsForm = null;
+            Kernel32.TrimWorkingSet();
+        };
+        _settingsForm.Show();
+    }
+
+    /// <summary>Called by the settings window and menus after changing anything that affects the bar.</summary>
+    internal void SettingsChanged()
+    {
+        _settings.TidyPrefs();
+        _settings.Save();
+        OnDevicesChanged();
+    }
+
+    readonly DateTime _started = DateTime.UtcNow;
+    bool _updating;
+
+    bool UpdateDue() =>
+        _settings.AutoUpdate && Installer.IsInstalled && !_updating &&
+        DateTime.UtcNow - _started > TimeSpan.FromMinutes(2) &&
+        (_settings.LastUpdateCheck is not DateTime last || DateTime.UtcNow - last > TimeSpan.FromHours(24));
+
+    /// <summary>Checks GitHub for a newer release and, if found, installs it and restarts. Returns a status line.</summary>
+    internal async Task<string> CheckForUpdateAsync(bool manual)
+    {
+        if (_updating) return "Already checking…";
+        _updating = true;
+        try
+        {
+            _settings.LastUpdateCheck = DateTime.UtcNow;
+            _settings.Save();
+            var release = await Installer.CheckAsync();
+            if (release is null) return $"Up to date (version {Installer.Version.ToString(3)})";
+            if (!await Installer.ApplyAsync(release)) return $"Couldn't install {release.Tag}; see the log.";
+            Log.Write($"updated to {release.Tag}; restarting");
+            Installer.Restart("--updated");
+            Close();
+            return $"Updated to {release.Tag}";
+        }
+        catch (Exception ex)
+        {
+            Log.Write("update check failed: " + ex.Message);
+            return manual ? "Couldn't reach GitHub: " + ex.Message : "";
+        }
+        finally
+        {
+            _updating = false;
+            Kernel32.TrimWorkingSet();
+        }
+    }
+
+    internal void RenameDevice(DeviceStatus device)
+    {
+        var name = InputBox.Show(this, "Rename device", $"Name shown for {device.Name}:", device.Label);
+        if (name is null) return;
+        _settings.EditPrefs(device.Id).Name = string.IsNullOrWhiteSpace(name) || name.Trim() == device.Name ? null : name.Trim();
+        SettingsChanged();
+    }
+
+    internal void MoveDevice(string id, int delta)
+    {
+        DeviceMonitorOrder.Move(_settings, VisibleDevices().ToList(), id, delta);
+        SettingsChanged();
     }
 
     void ToggleFlyout(DeviceStatus dev, Rectangle anchor)
@@ -502,32 +691,70 @@ internal sealed class BarForm : Form
     void ShowMenu(DeviceStatus? device = null)
     {
         _tip.Hide(this);
-        var menu = new ContextMenuStrip
-        {
-            Renderer = new ToolStripProfessionalRenderer(new DarkMenuColors()),
-            ForeColor = Theme.Text,
-            ShowImageMargin = false,
-            ShowCheckMargin = true,
-        };
+        var menu = NewMenu();
 
         if (device is not null)
         {
-            menu.Items.Add(new ToolStripMenuItem(device.Name) { Enabled = false, Font = new Font(menu.Font, FontStyle.Bold) });
+            menu.Items.Add(new ToolStripMenuItem(device.Label) { Enabled = false, Font = new Font(menu.Font, FontStyle.Bold) });
             if (DeviceControl.CanDisconnect(device))
-                menu.Items.Add("Disconnect (stays paired)", null, async (_, _) => await RunDeviceAction(DeviceControl.DisconnectAsync(device), device, "disconnect"));
+                menu.Items.Add(DeviceControl.DisconnectLabel(device), null, async (_, _) => await RunDeviceAction(DeviceControl.DisconnectAsync(device), device, "disconnect"));
             else if (DeviceControl.CanConnect(device))
                 menu.Items.Add("Connect", null, async (_, _) => await RunDeviceAction(DeviceControl.ConnectAsync(device), device, "connect"));
+            menu.Items.Add("Rename…", null, (_, _) => RenameDevice(device));
+            menu.Items.Add("Move left", null, (_, _) => MoveDevice(device.Id, -1));
+            menu.Items.Add("Move right", null, (_, _) => MoveDevice(device.Id, +1));
+
+            var prefs = _settings.Prefs(device.Id);
+            var alerts = new ToolStripMenuItem("Alerts");
+            foreach (var v in new int?[] { null, 0, 10, 15, 20, 30 })
+            {
+                var text = v switch { null => $"Low battery: default ({_settings.AlertThreshold}%)", 0 => "Low battery: off", _ => $"Low battery: below {v}%" };
+                var item = new ToolStripMenuItem(text) { Checked = prefs.LowAlert == v, ForeColor = Theme.Text };
+                item.Click += (_, _) =>
+                {
+                    _settings.EditPrefs(device.Id).LowAlert = v;
+                    SettingsChanged();
+                };
+                alerts.DropDownItems.Add(item);
+            }
+            alerts.DropDownItems.Add(new ToolStripSeparator());
+            var full = new ToolStripMenuItem("Notify when fully charged") { Checked = prefs.FullAlert, ForeColor = Theme.Text };
+            full.Click += (_, _) =>
+            {
+                _settings.EditPrefs(device.Id).FullAlert = !prefs.FullAlert;
+                SettingsChanged();
+            };
+            alerts.DropDownItems.Add(full);
+            menu.Items.Add(alerts);
+
             menu.Items.Add("Hide from bar", null, (_, _) => HideDevice(device.Id));
             menu.Items.Add(new ToolStripSeparator());
         }
 
         menu.Items.Add("Refresh now", null, (_, _) => _ = _monitor.RefreshAsync(true));
+        menu.Items.Add("Settings…", null, (_, _) => OpenSettings());
         menu.Items.Add(new ToolStripSeparator());
+
+        var compact = new ToolStripMenuItem("Compact mode") { Checked = _settings.Compact, CheckOnClick = true };
+        compact.CheckedChanged += (_, _) =>
+        {
+            _settings.Compact = compact.Checked;
+            SettingsChanged();
+        };
+        menu.Items.Add(compact);
+
+        var audioChip = new ToolStripMenuItem("Show audio switch") { Checked = _settings.AudioChip, CheckOnClick = true };
+        audioChip.CheckedChanged += (_, _) =>
+        {
+            _settings.AudioChip = audioChip.Checked;
+            SettingsChanged();
+        };
+        menu.Items.Add(audioChip);
 
         var devices = new ToolStripMenuItem("Show on bar");
         foreach (var d in _devices)
         {
-            var item = new ToolStripMenuItem(d.Name) { Checked = !_settings.Hidden.Contains(d.Id), CheckOnClick = true, ForeColor = Theme.Text };
+            var item = new ToolStripMenuItem(d.Label) { Checked = !_settings.Hidden.Contains(d.Id), CheckOnClick = true, ForeColor = Theme.Text };
             item.CheckedChanged += (_, _) =>
             {
                 if (item.Checked) _settings.Hidden.Remove(d.Id); else _settings.Hidden.Add(d.Id);
@@ -548,67 +775,25 @@ internal sealed class BarForm : Form
         };
         menu.Items.Add(showDisconnected);
 
-        menu.Items.Add(Choice("Low-battery alert", new[] { 0, 10, 15, 20, 30 }, v => v == 0 ? "Off" : $"Below {v}%",
-            () => _settings.AlertThreshold, v => _settings.AlertThreshold = v));
-        menu.Items.Add(Choice("Check USB dongles every", new[] { 1, 2, 5, 10, 15 }, v => $"{v} min",
-            () => _settings.DonglePollMinutes, v => _settings.DonglePollMinutes = v));
-
-        menu.Items.Add("Reset position", null, (_, _) =>
-        {
-            _settings.OffsetX = 0;
-            _settings.Save();
-            PositionOnTaskbar();
-        });
-
-        var startup = new ToolStripMenuItem("Start with Windows") { Checked = IsStartupEnabled(), CheckOnClick = true };
-        startup.CheckedChanged += (_, _) => SetStartup(startup.Checked);
-        menu.Items.Add(startup);
-
         menu.Items.Add(new ToolStripSeparator());
         menu.Items.Add("Bluetooth settings", null, (_, _) => OpenUri("ms-settings:bluetooth"));
         menu.Items.Add("Exit", null, (_, _) => Close());
 
-        foreach (ToolStripItem i in menu.Items) i.ForeColor = Theme.Text;
-        menu.Closed += (_, _) => BeginInvokeSafe(menu.Dispose);
+        ShowMenuAtCursor(menu);
+    }
 
-        User32.SetForegroundWindow(Handle);
-        menu.Show(Cursor.Position, ToolStripDropDownDirection.AboveRight);
+    internal void ResetPosition()
+    {
+        _settings.OffsetX = 0;
+        _settings.Save();
+        PositionOnTaskbar();
     }
 
     async Task RunDeviceAction(Task<bool> action, DeviceStatus device, string verb)
     {
         bool ok = await action;
-        if (!ok) ShowBalloon("BFM", $"Couldn't {verb} {device.Name}. Try Bluetooth settings.");
+        if (!ok) ShowBalloon("BFM", $"Couldn't {verb} {device.Label}. Try Bluetooth settings.");
         RefreshSoon(3000);
-    }
-
-    ToolStripMenuItem Choice(string title, int[] values, Func<int, string> label, Func<int> get, Action<int> set)
-    {
-        var parent = new ToolStripMenuItem(title);
-        foreach (var v in values)
-        {
-            var item = new ToolStripMenuItem(label(v)) { Checked = get() == v, ForeColor = Theme.Text };
-            item.Click += (_, _) =>
-            {
-                set(v);
-                _settings.Save();
-            };
-            parent.DropDownItems.Add(item);
-        }
-        return parent;
-    }
-
-    static bool IsStartupEnabled()
-    {
-        using var key = Registry.CurrentUser.OpenSubKey(RunKey);
-        return key?.GetValue("BFM") is string;
-    }
-
-    static void SetStartup(bool enable)
-    {
-        using var key = Registry.CurrentUser.CreateSubKey(RunKey);
-        if (enable) key.SetValue("BFM", $"\"{Environment.ProcessPath}\"");
-        else key.DeleteValue("BFM", false);
     }
 
     internal static void OpenUri(string uri)
@@ -625,13 +810,17 @@ internal sealed class BarForm : Form
 
     // ---------- alerts ----------
 
-    void ShowLowBattery(DeviceStatus d) => ShowBalloon("Low battery", $"{d.Name} is at {d.Battery}%");
-
-    void ShowBalloon(string title, string text)
+    void ShowAlert(DeviceStatus d, AlertKind kind)
     {
-        _notify ??= new NotifyIcon { Icon = SystemIcons.Warning, Text = "BFM" };
+        if (kind == AlertKind.Full) ShowBalloon("Fully charged", $"{d.Label} is at 100% — you can unplug it", ToolTipIcon.Info);
+        else ShowBalloon("Low battery", $"{d.Label} is at {d.Battery}%");
+    }
+
+    internal void ShowBalloon(string title, string text, ToolTipIcon icon = ToolTipIcon.Warning)
+    {
+        _notify ??= new NotifyIcon { Icon = SystemIcons.Information, Text = "BFM" };
         _notify.Visible = true;
-        _notify.ShowBalloonTip(8000, title, text, ToolTipIcon.Warning);
+        _notify.ShowBalloonTip(8000, title, text, icon);
         var t = new System.Windows.Forms.Timer { Interval = 15_000 };
         t.Tick += (_, _) =>
         {

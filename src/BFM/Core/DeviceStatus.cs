@@ -16,6 +16,14 @@ public sealed class DeviceStatus
     public DateTime? Updated { get; set; }
     public string? BluetoothAddress { get; set; }
 
+    /// <summary>When the device was last seen connected.</summary>
+    public DateTime? LastSeen { get; set; }
+
+    /// <summary>User-chosen name. <see cref="Name"/> stays the hardware name, which audio matching relies on.</summary>
+    public string? CustomName { get; set; }
+
+    public string Label => string.IsNullOrWhiteSpace(CustomName) ? Name : CustomName;
+
     /// <summary>Extra reading shown in the tooltip and flyout, e.g. "L 80% · R 70% · Case 40%".</summary>
     public string? Detail { get; set; }
 

@@ -7,6 +7,30 @@ namespace Bfm;
 /// <summary><c>BFM.exe --probe</c>: runs every provider once and writes a diagnostic report.</summary>
 internal static class Probe
 {
+    /// <summary><c>BFM.exe --listen VID SECONDS</c>: passively prints every input report on that vendor's
+    /// vendor-defined collections. Sends nothing to the device.</summary>
+    public static int Listen(string vidHex, int seconds)
+    {
+        Kernel32.AttachConsole(-1);
+        ushort vid = Convert.ToUInt16(vidHex, 16);
+        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(seconds));
+        var tasks = Hid.Enumerate(vid).Where(i => i.UsagePage >= 0xFF00).Select(async ifc =>
+        {
+            using var ch = HidChannel.Open(ifc);
+            if (ch is null) { Console.WriteLine($"open failed {ifc.Path}"); return; }
+            Console.WriteLine($"listening {ifc.Vid:x4}:{ifc.Pid:x4} page={ifc.UsagePage:x4}/{ifc.Usage:x2}");
+            while (!cts.IsCancellationRequested)
+            {
+                byte[]? r;
+                try { r = await ch.ReadAsync(cts.Token); } catch (OperationCanceledException) { break; }
+                if (r is null) break;
+                Console.WriteLine($"{DateTime.Now:HH:mm:ss.fff} {ifc.UsagePage:x4} {Convert.ToHexString(r)}");
+            }
+        }).ToArray();
+        Task.WaitAll(tasks);
+        return 0;
+    }
+
     public static int Run()
     {
         Kernel32.AttachConsole(-1);
