@@ -79,10 +79,12 @@ internal sealed class FlyoutForm : Form
         User32.ApplyDarkRoundedFrame(Handle);
     }
 
+    bool _dialogOpen;
+
     protected override void OnDeactivate(EventArgs e)
     {
         base.OnDeactivate(e);
-        Close();
+        if (!_dialogOpen) Close();
     }
 
     protected override void OnKeyDown(KeyEventArgs e)
@@ -173,7 +175,11 @@ internal sealed class FlyoutForm : Form
             {
                 var current = _bar.AppSettings.Prefs(_device.Id).Lightbar;
                 using var dlg = new ColorDialog { FullOpen = true, Color = current is null ? Color.Blue : ColorTranslator.FromHtml("#" + current) };
-                if (dlg.ShowDialog(this) != DialogResult.OK) return;
+                _dialogOpen = true;
+                var result = dlg.ShowDialog(this);
+                _dialogOpen = false;
+                Activate();
+                if (result != DialogResult.OK) return;
                 var hex = $"{dlg.Color.R:X2}{dlg.Color.G:X2}{dlg.Color.B:X2}";
                 _bar.AppSettings.EditPrefs(_device.Id).Lightbar = hex;
                 _bar.SettingsChanged();
@@ -181,6 +187,16 @@ internal sealed class FlyoutForm : Form
                 _ = Task.Run(() => Providers.DualSenseProvider.SetLightbar(id, hex));
             };
             _body.Controls.Add(lightbar);
+            if (System.Diagnostics.Process.GetProcessesByName("steam").Length > 0)
+                _body.Controls.Add(new Label
+                {
+                    Text = "Steam is running and may override the colour. Set it in Steam > Settings > Controller instead, or close Steam.",
+                    AutoSize = false,
+                    Width = width,
+                    Height = Scale(34),
+                    ForeColor = Theme.TextDim,
+                    Margin = new Padding(0, Scale(2), 0, 0),
+                });
         }
 
         bool canDisconnect = DeviceControl.CanDisconnect(_device);

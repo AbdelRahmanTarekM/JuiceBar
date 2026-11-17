@@ -15,7 +15,7 @@ internal static partial class Hid
     [DllImport("hid.dll")] static extern bool HidD_GetPreparsedData(SafeFileHandle h, out IntPtr data);
     [DllImport("hid.dll")] static extern bool HidD_FreePreparsedData(IntPtr data);
     [DllImport("hid.dll")] static extern int HidP_GetCaps(IntPtr data, out HIDP_CAPS caps);
-    [DllImport("hid.dll")] internal static extern bool HidD_SetOutputReport(SafeFileHandle h, byte[] buf, int len);
+    [DllImport("hid.dll", SetLastError = true)] internal static extern bool HidD_SetOutputReport(SafeFileHandle h, byte[] buf, int len);
     [DllImport("hid.dll", CharSet = CharSet.Unicode)] static extern bool HidD_GetProductString(SafeFileHandle h, char[] buf, int len);
 
     [StructLayout(LayoutKind.Sequential)]

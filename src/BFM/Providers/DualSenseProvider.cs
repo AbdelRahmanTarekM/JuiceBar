@@ -54,6 +54,7 @@ internal sealed class DualSenseProvider : IBatteryProvider
             var addr = ifc.IsBluetooth ? Hid.GetBluetoothAddress(ifc.Path) : null;
             if ((addr is null ? "dualsense:usb" : "bt:" + addr) != id) continue;
             using var ch = HidChannel.Open(ifc);
+            Log.Debug($"dualsense {id}: out={ifc.OutputLength} bt={ifc.IsBluetooth} open={ch is not null}");
             if (ch is null) return false;
             // First release the firmware's own lightbar animation, then set the colour (as hid-playstation does).
             bool ok = ch.Write(OutputReport(ifc.IsBluetooth, c =>

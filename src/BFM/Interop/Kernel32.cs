@@ -17,6 +17,9 @@ internal static class Kernel32
     public static extern unsafe bool GetOverlappedResult(SafeFileHandle h, NativeOverlapped* overlapped,
         out int transferred, bool wait);
 
+    [DllImport("kernel32.dll", SetLastError = true)]
+    public static extern bool WriteFile(SafeFileHandle h, byte[] buffer, int count, out int written, IntPtr overlapped);
+
     [DllImport("kernel32.dll")]
     public static extern bool AttachConsole(int processId);
 

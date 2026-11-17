@@ -1,4 +1,5 @@
 using Bfm.Core;
+using Bfm.Interop;
 using Bfm.Providers;
 using Bfm.UI;
 
@@ -25,6 +26,11 @@ internal static class Program
             return Probe.Run();
         if (args.Length >= 3 && args[0].Equals("--listen", StringComparison.OrdinalIgnoreCase))
             return Probe.Listen(args[1], int.Parse(args[2]));
+        if (args.Length >= 3 && args[0].Equals("--lightbar", StringComparison.OrdinalIgnoreCase))
+        {
+            Log.Verbose = true;
+            return DualSenseProvider.SetLightbar(args[1], args[2]) ? 0 : 1;
+        }
 
         ApplicationConfiguration.Initialize();
         if (Has("--uninstall"))
