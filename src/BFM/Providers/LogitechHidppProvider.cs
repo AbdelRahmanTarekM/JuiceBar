@@ -30,6 +30,15 @@ internal sealed class LogitechHidppProvider : IBatteryProvider, IEventSource
                 if (started is null) _watchers.Remove(ifc.Path);
                 else _watchers[ifc.Path] = started;
             }
+            foreach (var ifc in Hid.Enumerate(VendorLogitech).Where(i => ReceiverPids.Contains(i.Pid) && i.UsagePage == 0xFF00 && i.Usage == 0x02))
+            {
+                if (_watchers.TryGetValue(ifc.Path, out var w) && w.IsAlive) continue;
+                w?.Dispose();
+                ushort pid = ifc.Pid;
+                var started = HidEventWatcher.Start(ifc, r => OnLongReport(pid, r), onEvent);
+                if (started is null) _watchers.Remove(ifc.Path);
+                else _watchers[ifc.Path] = started;
+            }
         }
     }
 
@@ -52,11 +61,44 @@ internal sealed class LogitechHidppProvider : IBatteryProvider, IEventSource
     readonly Dictionary<string, SlotIdentity> _identityCache = LoadIdentities();
     readonly HashSet<string> _verified = new();
 
+    public LogitechHidppProvider()
+    {
+        foreach (var (slot, id) in _identityCache)
+            if (id.BatteryFeature != 0) _batteryFeatures[slot] = (id.BatteryFeature, id.BatteryIndex);
+    }
+
     internal sealed class SlotIdentity
     {
         public string Name { get; set; } = "";
         public DeviceKind Kind { get; set; }
         public string Id { get; set; } = "";
+        /// <summary>Battery feature id (0x1004/0x1000/0x1001) and its index on this device, for decoding pushed events.</summary>
+        public ushort BatteryFeature { get; set; }
+        public byte BatteryIndex { get; set; }
+    }
+
+    /// <summary>Battery readings a device pushed by itself (HID++ event, software id 0), keyed by slot.</summary>
+    readonly System.Collections.Concurrent.ConcurrentDictionary<string, (int? Battery, bool? Charging)> _pushed = new();
+
+    /// <summary>Slot → battery feature, readable from the watcher thread.</summary>
+    readonly System.Collections.Concurrent.ConcurrentDictionary<string, (ushort Feature, byte Index)> _batteryFeatures = new();
+
+    bool OnLongReport(ushort pid, byte[] r)
+    {
+        // Notifications carry software id 0 in the low nibble and event 0 in the high nibble.
+        if (r.Length < 8 || r[0] != LongReport || r[1] is < 1 or > 6 || r[3] != 0) return false;
+        var slotKey = $"logi:{pid:x4}:{r[1]}";
+        if (!_batteryFeatures.TryGetValue(slotKey, out var bf) || bf.Index != r[2]) return false;
+        var p = r.AsSpan(4);
+        (int? level, bool? charging) reading = bf.Feature switch
+        {
+            FeatureUnifiedBattery => (p[0] <= 100 ? p[0] : null, p[2] is 1 or 2),
+            FeatureBatteryStatus => (p[0] is > 0 and <= 100 ? p[0] : null, p[2] is 1 or 2 or 4),
+            _ => (VoltageToPercent((p[0] << 8) | p[1]), (p[2] & 0x80) != 0),
+        };
+        _pushed[slotKey] = reading;
+        Log.Debug($"{slotKey}: pushed battery {reading.level} charging={reading.charging}");
+        return true;
     }
 
     static string IdentityFile => Path.Combine(Settings.Folder, "logitech-slots.json");
@@ -189,11 +231,19 @@ internal sealed class LogitechHidppProvider : IBatteryProvider, IEventSource
         if (ping is null)
         {
             if (_identityCache.TryGetValue(key, out var known))
-                return new DeviceStatus
+            {
+                var napping = new DeviceStatus
                 {
                     Id = known.Id, Name = known.Name, Kind = known.Kind, Transport = Transport.Dongle,
                     Connected = linked == true,
                 };
+                if (_pushed.TryRemove(key, out var pushed))
+                {
+                    napping.Battery = pushed.Battery;
+                    napping.Charging = pushed.Charging;
+                }
+                return napping;
+            }
             return null;
         }
 
@@ -247,24 +297,44 @@ internal sealed class LogitechHidppProvider : IBatteryProvider, IEventSource
             Connected = true,
         };
 
+        _pushed.TryRemove(key, out _);
         if (Feature(FeatureUnifiedBattery) is byte ub && bus.Request(index, ub, 1) is { } u)
         {
             status.Battery = u[0] <= 100 ? u[0] : null;
             status.Charging = u[2] is 1 or 2;
+            RememberBatteryFeature(key, identity, FeatureUnifiedBattery, ub);
         }
         else if (Feature(FeatureBatteryStatus) is byte bs && bus.Request(index, bs, 0) is { } s)
         {
             status.Battery = s[0] is > 0 and <= 100 ? s[0] : null;
             status.Charging = s[2] is 1 or 2 or 4;
+            RememberBatteryFeature(key, identity, FeatureBatteryStatus, bs);
         }
         else if (Feature(FeatureBatteryVoltage) is byte bv && bus.Request(index, bv, 0) is { } v)
         {
             status.Battery = VoltageToPercent((v[0] << 8) | v[1]);
             status.Charging = (v[2] & 0x80) != 0;
+            RememberBatteryFeature(key, identity, FeatureBatteryVoltage, bv);
         }
 
         if (features is not null) _featureCache[key] = features;
         return status;
+    }
+
+    void RememberBatteryFeature(string key, SlotIdentity identity, ushort feature, byte index)
+    {
+        bool changed = false;
+        // The same device paired in several slots of this receiver reports through whichever one is linked.
+        foreach (var (slot, other) in _identityCache)
+        {
+            if (slot != key && other.Id != identity.Id) continue;
+            _batteryFeatures[slot] = (feature, index);
+            if (other.BatteryFeature == feature && other.BatteryIndex == index) continue;
+            other.BatteryFeature = feature;
+            other.BatteryIndex = index;
+            changed = true;
+        }
+        if (changed) SaveIdentities();
     }
 
     static int VoltageToPercent(int mv)
